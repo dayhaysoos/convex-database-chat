@@ -11,6 +11,7 @@
     "seed": "convex run seed:seedProducts"
   },
   "dependencies": {
+    "@dayhaysoos/convex-database-chat": "0.1.0-alpha.0",
     "convex": "^1.17.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
