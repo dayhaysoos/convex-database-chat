@@ -62,19 +62,19 @@ export function Chat() {
 
   const messages = useQuery(
     api.chat.getMessages,
-    conversationId ? { conversationId } : "skip"
+    conversationId ? { conversationId } : "skip",
   ) as Message[] | undefined;
 
   const streamingContent = useQuery(
     api.chat.getStreaming,
-    conversationId ? { conversationId } : "skip"
+    conversationId ? { conversationId } : "skip",
   );
 
   // Create conversation on mount
   useEffect(() => {
     if (!conversationId) {
       createConversation({ externalId: "demo-user", title: "Demo Chat" }).then(
-        setConversationId
+        setConversationId,
       );
     }
   }, [conversationId, createConversation]);
@@ -123,9 +123,7 @@ export function Chat() {
         {!messages || messages.length === 0 ? (
           <div className="chat-welcome">
             <h3>Welcome! 👋</h3>
-            <p>
-              I can help you explore your product inventory. Try asking me:
-            </p>
+            <p>I can help you explore your product inventory. Try asking me:</p>
             <ul>
               <li>"Show me all electronics under $50"</li>
               <li>"What products are low on stock?"</li>

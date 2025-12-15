@@ -24,7 +24,7 @@ export const searchProducts = query({
       stock: v.number(),
       inStock: v.boolean(),
       viewUrl: v.string(),
-    })
+    }),
   ),
   handler: async (ctx, args) => {
     const limit = Math.min(args.limit ?? 20, 50);
@@ -55,7 +55,7 @@ export const searchProducts = query({
       products = products.filter(
         (p) =>
           p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q)
+          p.description.toLowerCase().includes(q),
       );
     }
 
@@ -87,7 +87,7 @@ export const getProductStats = query({
         category: v.string(),
         count: v.number(),
         totalStock: v.number(),
-      })
+      }),
     ),
     priceRanges: v.object({
       under25: v.number(),
@@ -107,9 +107,15 @@ export const getProductStats = query({
         : 0;
 
     // Category breakdown
-    const categoryMap = new Map<string, { count: number; totalStock: number }>();
+    const categoryMap = new Map<
+      string,
+      { count: number; totalStock: number }
+    >();
     for (const p of products) {
-      const existing = categoryMap.get(p.category) || { count: 0, totalStock: 0 };
+      const existing = categoryMap.get(p.category) || {
+        count: 0,
+        totalStock: 0,
+      };
       categoryMap.set(p.category, {
         count: existing.count + 1,
         totalStock: existing.totalStock + p.stock,
@@ -120,14 +126,15 @@ export const getProductStats = query({
         category,
         count: data.count,
         totalStock: data.totalStock,
-      })
+      }),
     );
 
     // Price ranges
     const priceRanges = {
       under25: products.filter((p) => p.price < 25).length,
       from25to50: products.filter((p) => p.price >= 25 && p.price < 50).length,
-      from50to100: products.filter((p) => p.price >= 50 && p.price < 100).length,
+      from50to100: products.filter((p) => p.price >= 50 && p.price < 100)
+        .length,
       over100: products.filter((p) => p.price >= 100).length,
     };
 
@@ -157,7 +164,7 @@ export const getLowStockProducts = query({
       price: v.number(),
       stock: v.number(),
       viewUrl: v.string(),
-    })
+    }),
   ),
   handler: async (ctx, args) => {
     const threshold = args.threshold ?? 10;
