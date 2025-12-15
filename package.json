@@ -1,25 +1,38 @@
 {
   "name": "@dayhaysoos/convex-database-chat",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "description": "A Convex component for adding natural language database queries to your app.",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./react": "./src/react.tsx",
-    "./convex": "./convex/component/convex.config.ts"
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./convex.config": {
+      "types": "./dist/convex/component/convex.config.d.ts",
+      "import": "./dist/convex/component/convex.config.js"
+    }
   },
   "files": [
-    "convex",
-    "src"
+    "dist",
+    "convex"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm build",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "convex": "^1.17.0",
     "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
@@ -36,5 +49,9 @@
     "database",
     "component"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dayhaysoos/convex-database-chat"
+  }
 }
