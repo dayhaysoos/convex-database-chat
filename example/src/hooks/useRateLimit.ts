@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import FingerprintJS from "@fingerprintjs/fingerprintjs";
 
@@ -30,7 +30,6 @@ export function useRateLimit() {
     api.rateLimit.checkRateLimit,
     fingerprint ? { fingerprint } : "skip",
   );
-  const incrementConvex = useMutation(api.rateLimit.incrementRateLimit);
 
   // Initialize fingerprint
   useEffect(() => {
@@ -106,9 +105,8 @@ export function useRateLimit() {
     return state.remaining > 0;
   }, [state.remaining, state.resetTime]);
 
+  // Update local state only (server handles actual increment)
   const recordMessage = useCallback(async () => {
-    if (!fingerprint) return false;
-
     const now = Date.now();
     let localData: LocalRateLimitData;
 
@@ -128,31 +126,19 @@ export function useRateLimit() {
       localData = { count: 0, resetTime: now + RESET_PERIOD_MS };
     }
 
-    // Check if limit exceeded
-    if (localData.count >= MESSAGE_LIMIT) {
-      return false;
-    }
-
-    // Increment locally
+    // Increment locally (server already incremented)
     localData.count += 1;
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(localData));
 
     // Update state
     setState({
-      remaining: MESSAGE_LIMIT - localData.count,
+      remaining: Math.max(0, MESSAGE_LIMIT - localData.count),
       resetTime: localData.resetTime,
       isLoading: false,
     });
 
-    // Sync to Convex (fire and forget)
-    try {
-      await incrementConvex({ fingerprint });
-    } catch {
-      // Convex sync failed, but local is updated
-    }
-
     return true;
-  }, [fingerprint, incrementConvex]);
+  }, []);
 
   const getResetTimeDisplay = useCallback(() => {
     const now = Date.now();

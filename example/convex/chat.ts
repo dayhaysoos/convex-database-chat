@@ -397,7 +397,7 @@ async function callOpenRouter(
         "X-Title": "E-commerce Chat Demo",
       },
       body: JSON.stringify({
-        model: "anthropic/claude-3.5-sonnet",
+        model: "anthropic/claude-sonnet-4",
         messages,
         tools,
         stream: true,

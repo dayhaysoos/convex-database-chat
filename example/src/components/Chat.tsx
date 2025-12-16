@@ -114,9 +114,6 @@ export function Chat() {
     setIsLoading(true);
     setError(null);
 
-    // Record locally for UI feedback
-    await recordMessage();
-
     try {
       // Server enforces rate limit with fingerprint
       const result = await sendMessage({
@@ -126,6 +123,9 @@ export function Chat() {
       });
       if (!result.success) {
         setError(result.error ?? "Failed to send message");
+      } else {
+        // Update local rate limit after successful send
+        await recordMessage();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send message");
