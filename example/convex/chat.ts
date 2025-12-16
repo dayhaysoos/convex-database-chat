@@ -167,6 +167,7 @@ export const sendMessage = action({
   args: {
     conversationId: v.string(),
     message: v.string(),
+    fingerprint: v.optional(v.string()),
   },
   returns: v.object({
     success: v.boolean(),
@@ -177,6 +178,20 @@ export const sendMessage = action({
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       return { success: false, error: "OPENROUTER_API_KEY not configured" };
+    }
+
+    // Server-side rate limiting
+    if (args.fingerprint) {
+      const rateLimitResult = await ctx.runMutation(
+        api.rateLimit.incrementRateLimit,
+        { fingerprint: args.fingerprint },
+      );
+      if (!rateLimitResult.allowed) {
+        return {
+          success: false,
+          error: "Rate limit exceeded. Please try again later.",
+        };
+      }
     }
 
     try {
