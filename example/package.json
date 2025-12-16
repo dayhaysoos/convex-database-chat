@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "start": "serve dist -s -l $PORT",
     "convex": "convex dev",
     "seed": "convex run seed:seedProducts"
   },
@@ -14,7 +15,8 @@
     "@dayhaysoos/convex-database-chat": "0.1.0-alpha.0",
     "convex": "^1.17.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "serve": "^14.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
