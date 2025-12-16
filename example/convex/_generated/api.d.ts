@@ -10,6 +10,8 @@
 
 import type * as chat from "../chat.js";
 import type * as chatTools from "../chatTools.js";
+import type * as products from "../products.js";
+import type * as rateLimit from "../rateLimit.js";
 import type * as seed from "../seed.js";
 
 import type {
@@ -21,6 +23,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   chatTools: typeof chatTools;
+  products: typeof products;
+  rateLimit: typeof rateLimit;
   seed: typeof seed;
 }>;
 

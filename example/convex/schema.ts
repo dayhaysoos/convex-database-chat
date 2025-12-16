@@ -12,4 +12,10 @@ export default defineSchema({
   })
     .index("by_category", ["category"])
     .index("by_price", ["price"]),
+
+  rateLimits: defineTable({
+    fingerprint: v.string(),
+    messageCount: v.number(),
+    lastResetTime: v.number(),
+  }).index("by_fingerprint", ["fingerprint"]),
 });
