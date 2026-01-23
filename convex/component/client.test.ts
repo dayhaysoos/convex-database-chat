@@ -93,24 +93,32 @@ describe("DatabaseChatClient", () => {
       expect(messages[1].content).toBe("Hi there!");
     });
 
-    it("should get streaming content", async () => {
+    it("should get streaming content via delta-based API", async () => {
       const t = setupTest();
 
       const conversationId = await t.mutation(api.conversations.create, {
         externalId: "user:test",
       });
 
-      await t.mutation(api.stream.init, { conversationId });
-      await t.mutation(api.stream.update, {
-        conversationId,
-        content: "Streaming...",
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 0,
+        end: 1,
+        parts: [{ type: "text-delta", text: "Streaming..." }],
       });
 
-      const streaming = await t.query(api.stream.getContent, {
-        conversationId,
+      const deltas = await t.query(api.stream.listDeltas, {
+        streamId,
+        cursor: 0,
       });
 
-      expect(streaming?.content).toBe("Streaming...");
+      const content = deltas
+        .flatMap((d) => d.parts)
+        .filter((p) => p.type === "text-delta")
+        .map((p) => p.text)
+        .join("");
+      expect(content).toBe("Streaming...");
     });
   });
 
@@ -135,31 +143,43 @@ describe("DatabaseChatClient", () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("user");
 
-      // 4. Init streaming
-      await t.mutation(api.stream.init, { conversationId });
+      // 4. Create stream (delta-based API)
+      const streamId = await t.mutation(api.stream.create, { conversationId });
 
-      // 5. Simulate streaming updates (like from Vercel AI SDK)
-      await t.mutation(api.stream.update, {
-        conversationId,
-        content: "The",
+      // 5. Simulate streaming updates using delta-based API
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 0,
+        end: 1,
+        parts: [{ type: "text-delta", text: "The" }],
       });
-      await t.mutation(api.stream.update, {
-        conversationId,
-        content: "The answer",
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 1,
+        end: 2,
+        parts: [{ type: "text-delta", text: " answer" }],
       });
-      await t.mutation(api.stream.update, {
-        conversationId,
-        content: "The answer is 4.",
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 2,
+        end: 3,
+        parts: [{ type: "text-delta", text: " is 4." }],
       });
 
-      // Verify streaming state
-      const streamContent = await t.query(api.stream.getContent, {
-        conversationId,
+      // Verify streaming state via deltas
+      const deltas = await t.query(api.stream.listDeltas, {
+        streamId,
+        cursor: 0,
       });
-      expect(streamContent?.content).toBe("The answer is 4.");
+      const streamContent = deltas
+        .flatMap((d) => d.parts)
+        .filter((p) => p.type === "text-delta")
+        .map((p) => p.text)
+        .join("");
+      expect(streamContent).toBe("The answer is 4.");
 
-      // 6. Clear streaming
-      await t.mutation(api.stream.clear, { conversationId });
+      // 6. Finish streaming
+      await t.mutation(api.stream.finish, { streamId });
 
       // 7. Save assistant response
       await t.mutation(api.messages.add, {
@@ -177,11 +197,9 @@ describe("DatabaseChatClient", () => {
       expect(finalMessages[1].role).toBe("assistant");
       expect(finalMessages[1].content).toBe("The answer is 4.");
 
-      // Streaming should be cleared
-      const clearedStream = await t.query(api.stream.getContent, {
-        conversationId,
-      });
-      expect(clearedStream).toBeNull();
+      // Streaming should be finished (deltas deleted)
+      const state = await t.query(api.stream.getStream, { conversationId });
+      expect(state?.status).toBe("finished");
     });
 
     it("should support tool call messages", async () => {

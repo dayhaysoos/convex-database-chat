@@ -7,12 +7,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "start": "serve dist -s -l $PORT",
+    "start": "serve dist -s -l ${PORT:-3000}",
     "convex": "convex dev",
     "seed": "convex run seed:seedProducts"
   },
   "dependencies": {
-    "@dayhaysoos/convex-database-chat": "0.1.0-alpha.0",
+    "@dayhaysoos/convex-database-chat": "file:..",
     "@fingerprintjs/fingerprintjs": "^4.5.1",
     "convex": "^1.17.0",
     "react": "^18.3.1",

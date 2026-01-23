@@ -8,7 +8,7 @@
  *   DatabaseChatProvider,
  *   useDatabaseChat,
  *   useConversations,
- * } from "@/lib/databaseChat";
+ * } from "@dayhaysoos/convex-database-chat";
  * ```
  */
 
@@ -20,13 +20,20 @@ export {
   useConversations,
   useStreamingContent,
   useMessagesWithStreaming,
+  useSmoothText,
+  // Components
+  SmoothText,
   // Types
   type DatabaseChatApi,
   type DatabaseChatProviderProps,
   type Message,
-  type StreamingState,
+  type StreamState,
+  type StreamDelta,
+  type StreamPart,
   type UseDatabaseChatOptions,
   type UseDatabaseChatReturn,
   type UseConversationsOptions,
   type UseConversationsReturn,
+  type UseSmoothTextOptions,
+  type SmoothTextProps,
 } from "./react";

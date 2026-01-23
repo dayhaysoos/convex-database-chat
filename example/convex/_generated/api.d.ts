@@ -63,6 +63,7 @@ export declare const components: {
         {
           config: {
             apiKey: string;
+            maxMessagesForLLM?: number;
             model?: string;
             systemPrompt?: string;
             tools?: Array<{
@@ -152,7 +153,7 @@ export declare const components: {
       list: FunctionReference<
         "query",
         "internal",
-        { conversationId: string },
+        { conversationId: string; limit?: number },
         Array<{
           _creationTime: number;
           _id: string;
@@ -166,29 +167,78 @@ export declare const components: {
       >;
     };
     stream: {
-      clear: FunctionReference<
+      abort: FunctionReference<
+        "mutation",
+        "internal",
+        { reason: string; streamId: string },
+        null
+      >;
+      abortByConversation: FunctionReference<
+        "mutation",
+        "internal",
+        { conversationId: string; reason: string },
+        boolean
+      >;
+      addDelta: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          end: number;
+          parts: Array<{
+            args?: string;
+            error?: string;
+            result?: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            type: "text-delta" | "tool-call" | "tool-result" | "error";
+          }>;
+          start: number;
+          streamId: string;
+        },
+        boolean
+      >;
+      create: FunctionReference<
         "mutation",
         "internal",
         { conversationId: string },
+        string
+      >;
+      finish: FunctionReference<
+        "mutation",
+        "internal",
+        { streamId: string },
         null
       >;
-      getContent: FunctionReference<
+      getStream: FunctionReference<
         "query",
         "internal",
         { conversationId: string },
-        { content: string; updatedAt: number } | null
+        {
+          abortReason?: string;
+          endedAt?: number;
+          startedAt: number;
+          status: "streaming" | "finished" | "aborted";
+          streamId: string;
+        } | null
       >;
-      init: FunctionReference<
-        "mutation",
+      listDeltas: FunctionReference<
+        "query",
         "internal",
-        { conversationId: string },
-        null
-      >;
-      update: FunctionReference<
-        "mutation",
-        "internal",
-        { content: string; conversationId: string },
-        null
+        { cursor: number; streamId: string },
+        Array<{
+          end: number;
+          parts: Array<{
+            args?: string;
+            error?: string;
+            result?: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            type: "text-delta" | "tool-call" | "tool-result" | "error";
+          }>;
+          start: number;
+        }>
       >;
     };
   };

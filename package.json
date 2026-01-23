@@ -1,6 +1,6 @@
 {
   "name": "@dayhaysoos/convex-database-chat",
-  "version": "0.1.0-alpha.0",
+  "version": "0.2.0-alpha.0",
   "description": "A Convex component for adding natural language database queries to your app.",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -10,6 +10,19 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
     },
+    "./test": "./src/test.ts",
+    "./_generated/component.js": {
+      "types": "./dist/convex/component/_generated/component.d.ts",
+      "import": "./dist/convex/component/_generated/component.js"
+    },
+    "./_generated/component": {
+      "types": "./dist/convex/component/_generated/component.d.ts",
+      "import": "./dist/convex/component/_generated/component.js"
+    },
+    "./convex.config.js": {
+      "types": "./dist/convex/component/convex.config.d.ts",
+      "import": "./dist/convex/component/convex.config.js"
+    },
     "./convex.config": {
       "types": "./dist/convex/component/convex.config.d.ts",
       "import": "./dist/convex/component/convex.config.js"
@@ -17,7 +30,8 @@
   },
   "files": [
     "dist",
-    "convex"
+    "convex",
+    "src"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

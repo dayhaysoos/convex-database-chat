@@ -367,6 +367,12 @@ body {
   border-color: #7f1d1d;
 }
 
+.rate-limit-badge.dev-mode {
+  background: #14532d;
+  color: #86efac;
+  border-color: #166534;
+}
+
 .new-chat-btn {
   background: transparent;
   color: #a1a1aa;
@@ -628,6 +634,20 @@ body {
   background: #3f3f46;
   color: #71717a;
   cursor: not-allowed;
+}
+
+.chat-submit.chat-stop {
+  background: #dc2626;
+}
+
+.chat-submit.chat-stop:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.chat-submit.chat-stop.stopping {
+  background: #991b1b;
+  cursor: wait;
+  opacity: 0.8;
 }
 
 .rate-limit-footer {

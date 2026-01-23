@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, FormEvent } from "react";
+import { useState, useEffect, useRef, useMemo, FormEvent } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useRateLimit } from "../hooks/useRateLimit";
@@ -8,6 +8,23 @@ interface Message {
   role: "user" | "assistant" | "tool";
   content: string;
   createdAt: number;
+}
+
+interface StreamState {
+  streamId: string;
+  status: "streaming" | "finished" | "aborted";
+  startedAt: number;
+  endedAt?: number;
+  abortReason?: string;
+}
+
+interface StreamDelta {
+  start: number;
+  end: number;
+  parts: Array<{
+    type: "text-delta" | "tool-call" | "tool-result" | "error";
+    text?: string;
+  }>;
 }
 
 /**
@@ -50,15 +67,109 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
+/**
+ * Hook for delta-based streaming with client-side accumulation.
+ * This provides O(n) bandwidth instead of O(n²).
+ */
+function useDeltaStreaming(conversationId: string | null) {
+  const [cursor, setCursor] = useState(0);
+  const [accumulatedContent, setAccumulatedContent] = useState("");
+  const lastStreamIdRef = useRef<string | null>(null);
+  // Track the last processed end position to prevent duplicate processing
+  const lastProcessedEndRef = useRef(0);
+
+  // Subscribe to stream state
+  const streamState = useQuery(
+    api.chat.getStreamState,
+    conversationId ? { conversationId } : "skip"
+  ) as StreamState | null | undefined;
+
+  const streamId = streamState?.streamId ?? null;
+  const status = streamState?.status ?? null;
+
+  // Reset accumulation when stream changes
+  useEffect(() => {
+    if (streamId !== lastStreamIdRef.current) {
+      lastStreamIdRef.current = streamId;
+      lastProcessedEndRef.current = 0;
+      setCursor(0);
+      setAccumulatedContent("");
+    }
+  }, [streamId]);
+
+  // Fetch deltas from cursor position
+  const deltas = useQuery(
+    api.chat.getStreamDeltas,
+    streamId && status === "streaming" ? { streamId, cursor } : "skip"
+  ) as StreamDelta[] | undefined;
+
+  // Accumulate new deltas with deduplication
+  useEffect(() => {
+    if (!deltas || deltas.length === 0) {
+      return;
+    }
+
+    // Filter out already-processed deltas to prevent duplicates
+    const newDeltas = deltas.filter(
+      (d) => d.start >= lastProcessedEndRef.current
+    );
+
+    if (newDeltas.length === 0) {
+      return;
+    }
+
+    // Find the highest end position and accumulate text from new deltas only
+    let maxEnd = lastProcessedEndRef.current;
+    let newText = "";
+
+    for (const delta of newDeltas) {
+      if (delta.end > maxEnd) {
+        maxEnd = delta.end;
+      }
+      for (const part of delta.parts) {
+        if (part.type === "text-delta" && part.text) {
+          newText += part.text;
+        }
+      }
+    }
+
+    if (newText) {
+      setAccumulatedContent((prev) => prev + newText);
+    }
+
+    // Update ref immediately to prevent re-processing
+    lastProcessedEndRef.current = maxEnd;
+
+    // Update cursor state for next query
+    if (maxEnd > cursor) {
+      setCursor(maxEnd);
+    }
+  }, [deltas, cursor]);
+
+  // Return null content when not streaming or no content
+  const content =
+    status === "streaming" && accumulatedContent.length > 0
+      ? accumulatedContent
+      : null;
+
+  const isStreaming = status === "streaming";
+
+  return { content, isStreaming, status };
+}
+
 export function Chat() {
   const [isOpen, setIsOpen] = useState(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Track if current request was aborted to ignore its completion
+  const wasAbortedRef = useRef(false);
 
-  // Rate limiting
+  // Rate limiting (disabled on localhost)
   const {
     fingerprint,
     remaining,
@@ -67,27 +178,28 @@ export function Chat() {
     getResetTimeDisplay,
     messageLimit,
     isLoading: rateLimitLoading,
+    isLocalDev,
   } = useRateLimit();
 
   // Convex hooks
   const createConversation = useMutation(api.chat.createConversation);
   const sendMessage = useAction(api.chat.sendMessage);
+  const abortStreamMutation = useMutation(api.chat.abortStream);
 
   const messages = useQuery(
     api.chat.getMessages,
-    conversationId ? { conversationId } : "skip",
+    conversationId ? { conversationId } : "skip"
   ) as Message[] | undefined;
 
-  const streamingContent = useQuery(
-    api.chat.getStreaming,
-    conversationId ? { conversationId } : "skip",
-  );
+  // Use delta-based streaming for efficient O(n) bandwidth
+  const { content: streamingContent, isStreaming } =
+    useDeltaStreaming(conversationId);
 
   // Create conversation on mount
   useEffect(() => {
     if (!conversationId) {
       createConversation({ externalId: "demo-user", title: "Demo Chat" }).then(
-        setConversationId,
+        setConversationId
       );
     }
   }, [conversationId, createConversation]);
@@ -104,7 +216,7 @@ export function Chat() {
     // Quick client-side check (server also enforces)
     if (!canSendMessage()) {
       setError(
-        `Rate limit reached. Resets in ${getResetTimeDisplay()}. This is a demo with limited usage.`,
+        `Rate limit reached. Resets in ${getResetTimeDisplay()}. This is a demo with limited usage.`
       );
       return;
     }
@@ -113,6 +225,7 @@ export function Chat() {
     setInputValue("");
     setIsLoading(true);
     setError(null);
+    wasAbortedRef.current = false;
 
     try {
       // Server enforces rate limit with fingerprint
@@ -121,15 +234,54 @@ export function Chat() {
         message,
         fingerprint: fingerprint ?? undefined,
       });
+      
+      // Ignore result if request was aborted
+      if (wasAbortedRef.current) {
+        return;
+      }
+      
       if (!result.success) {
-        setError(result.error ?? "Failed to send message");
+        // Don't show "Stream aborted" as an error - it's expected when user stops
+        if (!result.error?.includes("aborted")) {
+          setError(result.error ?? "Failed to send message");
+        }
       } else {
         // Update local rate limit after successful send
         await recordMessage();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send message");
+      // Ignore errors from aborted requests
+      if (wasAbortedRef.current) {
+        return;
+      }
+      const errorMessage = err instanceof Error ? err.message : "Failed to send message";
+      // Don't show abort-related errors
+      if (!errorMessage.toLowerCase().includes("abort")) {
+        setError(errorMessage);
+      }
     } finally {
+      // Only update loading state if not aborted (abort handler already did it)
+      if (!wasAbortedRef.current) {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleAbort = async () => {
+    if (!conversationId || isStopping) return;
+    
+    // Mark as aborted so handleSubmit ignores the result
+    wasAbortedRef.current = true;
+    
+    // Immediate feedback
+    setIsStopping(true);
+    
+    try {
+      await abortStreamMutation({ conversationId, reason: "User cancelled" });
+    } catch (err) {
+      console.warn("Failed to abort stream:", err);
+    } finally {
+      setIsStopping(false);
       setIsLoading(false);
     }
   };
@@ -157,11 +309,16 @@ export function Chat() {
           <div className="chat-header">
             <div className="chat-header-left">
               <h2>💬 Database Chat</h2>
-              {!rateLimitLoading && (
+              {!rateLimitLoading && !isLocalDev && (
                 <span
                   className={`rate-limit-badge ${isRateLimited ? "exhausted" : ""}`}
                 >
                   {remaining}/{messageLimit} messages
+                </span>
+              )}
+              {isLocalDev && (
+                <span className="rate-limit-badge dev-mode">
+                  Dev Mode
                 </span>
               )}
             </div>
@@ -210,22 +367,24 @@ export function Chat() {
             )}
 
             {/* Streaming content */}
-            {streamingContent?.content && (
+            {streamingContent && (
               <div className="chat-message assistant streaming">
                 <div className="message-role">Assistant</div>
                 <div className="message-content">
-                  <MarkdownContent content={streamingContent.content} />
+                  <MarkdownContent content={streamingContent} />
                   <span className="typing-indicator">▌</span>
                 </div>
               </div>
             )}
 
-            {/* Loading indicator when no streaming yet */}
-            {isLoading && !streamingContent?.content && (
+            {/* Loading/stopping indicator when no streaming content yet */}
+            {(isLoading || isStopping) && !streamingContent && (
               <div className="chat-message assistant">
                 <div className="message-role">Assistant</div>
                 <div className="message-content">
-                  <span className="thinking">Thinking...</span>
+                  <span className="thinking">
+                    {isStopping ? "Stopping..." : "Thinking..."}
+                  </span>
                 </div>
               </div>
             )}
@@ -250,24 +409,35 @@ export function Chat() {
                   ? `Rate limit reached. Resets in ${getResetTimeDisplay()}`
                   : "Ask about products..."
               }
-              disabled={isLoading || !conversationId || isRateLimited}
+              disabled={isLoading || isStreaming || !conversationId || isRateLimited}
               className="chat-input"
             />
-            <button
-              type="submit"
-              disabled={
-                isLoading ||
-                !inputValue.trim() ||
-                !conversationId ||
-                isRateLimited
-              }
-              className="chat-submit"
-            >
-              {isLoading ? "..." : "Send"}
-            </button>
+            {isLoading || isStreaming || isStopping ? (
+              <button
+                type="button"
+                onClick={handleAbort}
+                disabled={isStopping}
+                className={`chat-submit chat-stop ${isStopping ? "stopping" : ""}`}
+                title={isStopping ? "Stopping..." : "Stop generation"}
+              >
+                {isStopping ? "Stopping..." : "Stop"}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={
+                  !inputValue.trim() ||
+                  !conversationId ||
+                  isRateLimited
+                }
+                className="chat-submit"
+              >
+                Send
+              </button>
+            )}
           </form>
 
-          {isRateLimited && (
+          {isRateLimited && !isLocalDev && (
             <div className="rate-limit-footer">
               This demo has a {messageLimit}-message limit per 24 hours.
             </div>

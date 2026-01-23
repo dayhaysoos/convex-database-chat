@@ -41,34 +41,44 @@ describe("databaseChat chat", () => {
       expect(messagesBefore).toHaveLength(1);
       expect(messagesBefore[0].role).toBe("user");
 
-      // 3. Init streaming
-      await t.mutation(api.stream.init, { conversationId });
-      const streamState = await t.query(api.stream.getContent, {
+      // 3. Create stream (delta-based API)
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+      const streamState = await t.query(api.stream.getStream, {
         conversationId,
       });
-      expect(streamState?.content).toBe("");
+      expect(streamState?.status).toBe("streaming");
 
-      // 4. Simulate streaming updates
-      await t.mutation(api.stream.update, {
-        conversationId,
-        content: "Hello",
+      // 4. Simulate streaming updates using delta-based API
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 0,
+        end: 1,
+        parts: [{ type: "text-delta", text: "Hello" }],
       });
-      await t.mutation(api.stream.update, {
-        conversationId,
-        content: "Hello! I'd be happy to help.",
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 1,
+        end: 2,
+        parts: [{ type: "text-delta", text: "! I'd be happy to help." }],
       });
 
-      const midStream = await t.query(api.stream.getContent, {
-        conversationId,
+      const deltas = await t.query(api.stream.listDeltas, {
+        streamId,
+        cursor: 0,
       });
-      expect(midStream?.content).toBe("Hello! I'd be happy to help.");
+      const midStreamContent = deltas
+        .flatMap((d) => d.parts)
+        .filter((p) => p.type === "text-delta")
+        .map((p) => p.text)
+        .join("");
+      expect(midStreamContent).toBe("Hello! I'd be happy to help.");
 
-      // 5. Clear streaming
-      await t.mutation(api.stream.clear, { conversationId });
-      const afterClear = await t.query(api.stream.getContent, {
+      // 5. Finish streaming
+      await t.mutation(api.stream.finish, { streamId });
+      const afterFinish = await t.query(api.stream.getStream, {
         conversationId,
       });
-      expect(afterClear).toBeNull();
+      expect(afterFinish?.status).toBe("finished");
 
       // 6. Save assistant response
       await t.mutation(api.messages.add, {
