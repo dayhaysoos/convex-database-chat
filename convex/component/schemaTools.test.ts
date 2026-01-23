@@ -22,7 +22,7 @@ describe("schemaTools", () => {
     searchIndexes: [],
   };
 
-  const handlers: SchemaToolHandlers = {
+  const _handlers: SchemaToolHandlers = {
     query: "query_handler",
     count: "count_handler",
     aggregate: "aggregate_handler",

@@ -21,11 +21,7 @@
  * ```
  */
 
-import type {
-  DatabaseChatTool,
-  ToolParameterSchema,
-  AutoToolsConfig,
-} from "./tools";
+import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 
 // =============================================================================
 // Types
@@ -89,7 +85,7 @@ export interface GenerateToolsOptions extends AutoToolsConfig {
 /**
  * Map Convex validator types to JSON Schema types.
  */
-function convexTypeToJsonType(
+function _convexTypeToJsonType(
   convexType: string
 ): "string" | "number" | "boolean" | "array" | "object" {
   const typeMap: Record<string, "string" | "number" | "boolean" | "array" | "object"> = {
@@ -337,7 +333,7 @@ export function generateToolsFromSchema(
   const {
     tables,
     allowedTables,
-    excludeFields,
+    excludeFields: _excludeFields,
     tableDescriptions,
     handlers,
   } = options;

@@ -426,7 +426,7 @@ async function callLLMWithTools(
     },
   }));
 
-  let currentMessages = [...messages];
+  const currentMessages = [...messages];
   let loopCount = 0;
   const MAX_LOOPS = 5;
 
