@@ -278,7 +278,7 @@ export class DeltaStreamer {
     const compressed: StreamPart[] = [];
 
     for (const part of parts) {
-      const last = compressed.at(-1);
+      const last = compressed.length > 0 ? compressed[compressed.length - 1] : undefined;
 
       if (part.type === "text-delta" && last?.type === "text-delta") {
         // Combine consecutive text deltas
