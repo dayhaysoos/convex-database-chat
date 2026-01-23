@@ -12,7 +12,7 @@
     "seed": "convex run seed:seedProducts"
   },
   "dependencies": {
-    "@dayhaysoos/convex-database-chat": "file:..",
+    "@dayhaysoos/convex-database-chat": "^0.2.0-alpha.0",
     "@fingerprintjs/fingerprintjs": "^4.5.1",
     "convex": "^1.17.0",
     "react": "^18.3.1",
