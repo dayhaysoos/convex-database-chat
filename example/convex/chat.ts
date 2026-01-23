@@ -146,15 +146,100 @@ export const getMessages = query({
   },
 });
 
-export const getStreaming = query({
+// =============================================================================
+// Delta-Based Streaming (New, Efficient)
+// Note: Using type assertions because generated types may be outdated.
+// Run `npx convex dev` to regenerate types.
+// =============================================================================
+
+// Type for the component's stream functions (including new delta-based API)
+type StreamComponent = typeof components.databaseChat.stream & {
+  // Query functions
+  getStream: any;
+  listDeltas: any;
+  // Mutation functions
+  create: any;
+  addDelta: any;
+  finish: any;
+  abort: any;
+  abortByConversation: any;
+};
+
+const streamApi = components.databaseChat.stream as StreamComponent;
+
+export const getStreamState = query({
   args: { conversationId: v.string() },
   returns: v.union(
-    v.object({ content: v.string(), updatedAt: v.number() }),
-    v.null(),
+    v.object({
+      streamId: v.string(),
+      status: v.union(
+        v.literal("streaming"),
+        v.literal("finished"),
+        v.literal("aborted")
+      ),
+      startedAt: v.number(),
+      endedAt: v.optional(v.number()),
+      abortReason: v.optional(v.string()),
+    }),
+    v.null()
   ),
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.databaseChat.stream.getContent, {
+    const result = await ctx.runQuery(streamApi.getStream, {
       conversationId: args.conversationId as any,
+    });
+    if (!result) return null;
+    return {
+      streamId: result.streamId as string,
+      status: result.status,
+      startedAt: result.startedAt,
+      endedAt: result.endedAt,
+      abortReason: result.abortReason,
+    };
+  },
+});
+
+export const getStreamDeltas = query({
+  args: { streamId: v.string(), cursor: v.number() },
+  returns: v.array(
+    v.object({
+      start: v.number(),
+      end: v.number(),
+      parts: v.array(
+        v.object({
+          type: v.union(
+            v.literal("text-delta"),
+            v.literal("tool-call"),
+            v.literal("tool-result"),
+            v.literal("error")
+          ),
+          text: v.optional(v.string()),
+          toolCallId: v.optional(v.string()),
+          toolName: v.optional(v.string()),
+          args: v.optional(v.string()),
+          result: v.optional(v.string()),
+          error: v.optional(v.string()),
+        })
+      ),
+    })
+  ),
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(streamApi.listDeltas, {
+      streamId: args.streamId as any,
+      cursor: args.cursor,
+    });
+  },
+});
+
+export const abortStream = mutation({
+  args: {
+    conversationId: v.string(),
+    reason: v.optional(v.string()),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(streamApi.abortByConversation, {
+      conversationId: args.conversationId as any,
+      reason: args.reason ?? "User cancelled",
     });
   },
 });
@@ -194,6 +279,14 @@ export const sendMessage = action({
       }
     }
 
+    // Use type assertions for new delta-based API functions
+    const streamCreate = streamApi.create as any;
+    const streamAddDelta = streamApi.addDelta as any;
+    const streamFinish = streamApi.finish as any;
+    const streamAbort = streamApi.abort as any;
+
+    let streamId: string | null = null;
+
     try {
       // 1. Save user message
       await ctx.runMutation(components.databaseChat.messages.add, {
@@ -217,31 +310,38 @@ export const sendMessage = action({
         })),
       ];
 
-      // 4. Initialize streaming
-      await ctx.runMutation(components.databaseChat.stream.init, {
+      // 4. Create stream (new delta-based API for O(n) bandwidth)
+      streamId = await ctx.runMutation(streamCreate, {
         conversationId: args.conversationId as any,
       });
 
-      // 5. Call LLM with tools
+      // 5. Call LLM with tools using delta-based streaming
+      let deltaCursor = 0;
       const response = await callLLMWithTools(
         apiKey,
         messages,
         TOOLS,
-        async (content: string) => {
-          await ctx.runMutation(components.databaseChat.stream.update, {
-            conversationId: args.conversationId as any,
-            content,
+        async (deltaText: string) => {
+          // Add delta (only new text, not accumulated content)
+          const success = await ctx.runMutation(streamAddDelta, {
+            streamId,
+            start: deltaCursor,
+            end: deltaCursor + 1,
+            parts: [{ type: "text-delta", text: deltaText }],
           });
+          deltaCursor++;
+          // If addDelta returns false, stream was aborted
+          if (!success) {
+            throw new Error("Stream aborted");
+          }
         },
         async (toolName: string, toolArgs: Record<string, unknown>) => {
           return await executeToolCall(ctx, toolName, toolArgs);
         },
       );
 
-      // 6. Clear streaming
-      await ctx.runMutation(components.databaseChat.stream.clear, {
-        conversationId: args.conversationId as any,
-      });
+      // 6. Finish streaming (deletes deltas, marks as finished)
+      await ctx.runMutation(streamFinish, { streamId });
 
       // 7. Save assistant response
       await ctx.runMutation(components.databaseChat.messages.add, {
@@ -252,10 +352,17 @@ export const sendMessage = action({
 
       return { success: true, content: response.content };
     } catch (error) {
-      // Clear streaming on error
-      await ctx.runMutation(components.databaseChat.stream.clear, {
-        conversationId: args.conversationId as any,
-      });
+      // Abort streaming on error
+      if (streamId) {
+        try {
+          await ctx.runMutation(streamAbort, {
+            streamId,
+            reason: error instanceof Error ? error.message : "Unknown error",
+          });
+        } catch {
+          // Ignore abort errors
+        }
+      }
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -304,7 +411,7 @@ async function callLLMWithTools(
   apiKey: string,
   messages: Array<{ role: string; content: string }>,
   tools: typeof TOOLS,
-  onChunk: (content: string) => Promise<void>,
+  onDelta: (deltaText: string) => Promise<void>,
   executeTool: (
     name: string,
     args: Record<string, unknown>,
@@ -330,7 +437,7 @@ async function callLLMWithTools(
       apiKey,
       currentMessages,
       formattedTools,
-      onChunk,
+      onDelta,
     );
 
     // If no tool calls, we're done
@@ -384,7 +491,7 @@ async function callOpenRouter(
   apiKey: string,
   messages: any[],
   tools: any[],
-  onChunk: (content: string) => Promise<void>,
+  onDelta: (deltaText: string) => Promise<void>,
 ): Promise<LLMResponse> {
   const response = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -435,35 +542,41 @@ async function callOpenRouter(
       const data = line.slice(6);
       if (data === "[DONE]") continue;
 
+      let parsed;
       try {
-        const parsed = JSON.parse(data);
-        const delta = parsed.choices?.[0]?.delta;
-
-        if (delta?.content) {
-          fullContent += delta.content;
-          await onChunk(fullContent);
-        }
-
-        // Handle tool calls in streaming
-        if (delta?.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const index = tc.index ?? 0;
-            if (!toolCallsInProgress.has(index)) {
-              toolCallsInProgress.set(index, {
-                id: tc.id || "",
-                name: tc.function?.name || "",
-                arguments: "",
-              });
-            }
-            const existing = toolCallsInProgress.get(index)!;
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name = tc.function.name;
-            if (tc.function?.arguments)
-              existing.arguments += tc.function.arguments;
-          }
-        }
+        parsed = JSON.parse(data);
       } catch {
         // Skip malformed JSON
+        continue;
+      }
+
+      const delta = parsed.choices?.[0]?.delta;
+
+      if (delta?.content) {
+        // Send only the delta (new text), not accumulated content
+        // This enables O(n) bandwidth instead of O(n²)
+        // NOTE: onDelta may throw "Stream aborted" - let it propagate to stop streaming
+        await onDelta(delta.content);
+        fullContent += delta.content;
+      }
+
+      // Handle tool calls in streaming
+      if (delta?.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const index = tc.index ?? 0;
+          if (!toolCallsInProgress.has(index)) {
+            toolCallsInProgress.set(index, {
+              id: tc.id || "",
+              name: tc.function?.name || "",
+              arguments: "",
+            });
+          }
+          const existing = toolCallsInProgress.get(index)!;
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) existing.name = tc.function.name;
+          if (tc.function?.arguments)
+            existing.arguments += tc.function.arguments;
+        }
       }
     }
   }

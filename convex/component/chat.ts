@@ -8,6 +8,7 @@ import {
   validateToolArgs,
 } from "./tools";
 import type { DatabaseChatTool } from "./tools";
+import { DeltaStreamer, type StreamPart } from "./deltaStreamer";
 
 /**
  * Send a message and get a streaming response.
@@ -27,6 +28,8 @@ export const send = action({
       systemPrompt: v.optional(v.string()),
       // Tools the LLM can call
       tools: v.optional(v.array(databaseChatToolValidator)),
+      // Max messages to include in LLM context (default: 50)
+      maxMessagesForLLM: v.optional(v.number()),
     }),
   },
   returns: v.object({
@@ -53,6 +56,14 @@ export const send = action({
       result: unknown;
     }> = [];
 
+    // Create DeltaStreamer for efficient streaming (O(n) instead of O(n²) bandwidth)
+    const streamer = new DeltaStreamer(ctx, api, conversationId, {
+      throttleMs: 100,
+      onAbort: async (reason) => {
+        console.warn("Stream aborted:", reason);
+      },
+    });
+
     try {
       // 1. Save the user message
       await ctx.runMutation(api.messages.add, {
@@ -61,13 +72,15 @@ export const send = action({
         content: message,
       });
 
-      // 2. Get conversation history
+      // 2. Get conversation history (bounded by limit)
+      const messagesLimit = config.maxMessagesForLLM ?? 50;
       const messages = await ctx.runQuery(api.messages.list, {
         conversationId,
+        limit: messagesLimit,
       });
 
-      // 3. Initialize streaming
-      await ctx.runMutation(api.stream.init, { conversationId });
+      // 3. Initialize streaming (creates stream record)
+      await streamer.getStreamId();
 
       // 4. Build messages for OpenRouter
       const systemPrompt = buildSystemPrompt(
@@ -77,17 +90,17 @@ export const send = action({
       const openRouterMessages = buildMessages(messages, systemPrompt);
 
       // 5. Call OpenRouter with streaming (and tools if provided)
+      // DeltaStreamer batches token writes for efficiency
       let response = await callOpenRouter({
         apiKey: config.apiKey,
         model: config.model ?? "openai/gpt-4o",
         messages: openRouterMessages,
         tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
-        onChunk: async (content: string) => {
-          await ctx.runMutation(api.stream.update, {
-            conversationId,
-            content,
-          });
+        onChunk: async (delta: string) => {
+          // Add delta as a text part - DeltaStreamer batches these
+          await streamer.addParts([{ type: "text-delta", text: delta }]);
         },
+        abortSignal: streamer.abortController.signal,
       });
 
       // 6. Handle tool calls (loop until no more tool calls)
@@ -97,7 +110,8 @@ export const send = action({
       while (
         response.toolCalls &&
         response.toolCalls.length > 0 &&
-        loopCount < MAX_TOOL_LOOPS
+        loopCount < MAX_TOOL_LOOPS &&
+        !streamer.abortController.signal.aborted
       ) {
         loopCount++;
 
@@ -179,6 +193,7 @@ export const send = action({
         // Build updated messages for next LLM call
         const updatedMessages = await ctx.runQuery(api.messages.list, {
           conversationId,
+          limit: messagesLimit,
         });
         const nextOpenRouterMessages = buildMessagesWithTools(
           updatedMessages,
@@ -191,17 +206,15 @@ export const send = action({
           model: config.model ?? "openai/gpt-4o",
           messages: nextOpenRouterMessages,
           tools: formatToolsForLLM(tools),
-          onChunk: async (content: string) => {
-            await ctx.runMutation(api.stream.update, {
-              conversationId,
-              content,
-            });
+          onChunk: async (delta: string) => {
+            await streamer.addParts([{ type: "text-delta", text: delta }]);
           },
+          abortSignal: streamer.abortController.signal,
         });
       }
 
-      // 7. Clear streaming state
-      await ctx.runMutation(api.stream.clear, { conversationId });
+      // 7. Finish streaming (this cleans up deltas)
+      await streamer.finish();
 
       // 8. Save final assistant message
       await ctx.runMutation(api.messages.add, {
@@ -216,11 +229,11 @@ export const send = action({
         toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
       };
     } catch (error) {
-      // Clear streaming on error
-      await ctx.runMutation(api.stream.clear, { conversationId });
-
+      // Abort streaming on error
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
+      await streamer.fail(errorMessage);
+
       return {
         success: false,
         error: errorMessage,
@@ -366,7 +379,10 @@ async function callOpenRouter(options: {
     type: "function";
     function: { name: string; description: string; parameters: unknown };
   }>;
-  onChunk: (content: string) => Promise<void>;
+  /** Called with each text delta (not accumulated content) */
+  onChunk: (delta: string) => Promise<void>;
+  /** Optional abort signal to cancel the request */
+  abortSignal?: AbortSignal;
 }): Promise<{
   content: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
@@ -393,6 +409,7 @@ async function callOpenRouter(options: {
         "X-Title": "DatabaseChat",
       },
       body: JSON.stringify(body),
+      signal: options.abortSignal,
     }
   );
 
@@ -434,11 +451,11 @@ async function callOpenRouter(options: {
           const parsed = JSON.parse(data);
           const choice = parsed.choices?.[0];
 
-          // Handle content delta
+          // Handle content delta - pass just the delta, not accumulated
           const content = choice?.delta?.content;
           if (content) {
             fullContent += content;
-            await options.onChunk(fullContent);
+            await options.onChunk(content); // Pass delta, not accumulated
           }
 
           // Handle tool calls delta

@@ -50,54 +50,27 @@
  *   },
  * });
  *
- * // Get streaming content (for real-time UI)
- * export const getStreaming = query({
+ * // Get stream state (for real-time UI)
+ * export const getStreamState = query({
  *   args: { conversationId: v.string() },
  *   handler: async (ctx, args) => {
- *     return await chat.getStreamingContent(ctx, args.conversationId);
+ *     return await chat.getStreamState(ctx, args.conversationId);
+ *   },
+ * });
+ *
+ * // Get stream deltas (for efficient delta-based streaming)
+ * export const getStreamDeltas = query({
+ *   args: { streamId: v.string(), cursor: v.number() },
+ *   handler: async (ctx, args) => {
+ *     return await chat.getStreamDeltas(ctx, args.streamId, args.cursor);
  *   },
  * });
  * ```
  *
  * ## Advanced: Using your own LLM SDK (Vercel AI, OpenAI, etc.)
  *
- * ```typescript
- * import { streamText } from "ai";
- * import { openai } from "@ai-sdk/openai";
- *
- * export const sendMessageCustom = action({
- *   args: { conversationId: v.string(), message: v.string() },
- *   handler: async (ctx, args) => {
- *     // 1. Save user message
- *     await chat.addMessage(ctx, args.conversationId, "user", args.message);
- *
- *     // 2. Get conversation history formatted for LLM
- *     const messages = await chat.getMessagesForLLM(ctx, args.conversationId);
- *
- *     // 3. Init streaming
- *     await chat.initStream(ctx, args.conversationId);
- *
- *     // 4. Call YOUR LLM SDK
- *     let fullContent = "";
- *     const result = await streamText({
- *       model: openai("gpt-4o"),
- *       messages,
- *       onChunk: async ({ chunk }) => {
- *         if (chunk.type === "text-delta") {
- *           fullContent += chunk.text;
- *           await chat.updateStream(ctx, args.conversationId, fullContent);
- *         }
- *       },
- *     });
- *
- *     // 5. Clear streaming & save response
- *     await chat.clearStream(ctx, args.conversationId);
- *     await chat.addMessage(ctx, args.conversationId, "assistant", result.text);
- *
- *     return { success: true, content: result.text };
- *   },
- * });
- * ```
+ * For custom LLM integrations, use the DeltaStreamer class from the component.
+ * See the component's chat.ts for an example of delta-based streaming.
  */
 
 import type {
@@ -139,6 +112,16 @@ export interface DatabaseChatConfig {
     /** Function handle strings for each tool type */
     handlers: SchemaToolHandlers;
   } & AutoToolsConfig;
+  /**
+   * Maximum messages to fetch for display (default: 100).
+   * Fetches the most recent N messages to prevent unbounded queries.
+   */
+  maxMessagesForDisplay?: number;
+  /**
+   * Maximum messages to include in LLM context (default: 50).
+   * Uses the most recent N messages for conversation history.
+   */
+  maxMessagesForLLM?: number;
 }
 
 export interface SendMessageOptions {
@@ -291,19 +274,61 @@ export class DatabaseChatClient {
 
   /**
    * Get messages in a conversation.
+   * Returns the most recent messages, bounded by maxMessagesForDisplay config (default: 100).
    */
   async getMessages(ctx: QueryCtx, conversationId: string) {
     return await ctx.runQuery(this.component.messages.list, {
+      conversationId: conversationId as any,
+      limit: this.config.maxMessagesForDisplay ?? 100,
+    });
+  }
+
+  /**
+   * Get the current stream state for a conversation.
+   * Use this to check if streaming is active and get the stream ID.
+   */
+  async getStreamState(ctx: QueryCtx, conversationId: string) {
+    return await ctx.runQuery(this.component.stream.getStream, {
       conversationId: conversationId as any,
     });
   }
 
   /**
-   * Get current streaming content (for real-time UI updates).
+   * Get stream deltas from a cursor position.
+   * Use with getStreamState to efficiently fetch streaming content.
+   * 
+   * @example
+   * ```typescript
+   * const state = await chat.getStreamState(ctx, conversationId);
+   * if (state?.status === 'streaming') {
+   *   const deltas = await chat.getStreamDeltas(ctx, state.streamId, cursor);
+   *   // Accumulate text from deltas client-side
+   * }
+   * ```
    */
-  async getStreamingContent(ctx: QueryCtx, conversationId: string) {
-    return await ctx.runQuery(this.component.stream.getContent, {
+  async getStreamDeltas(
+    ctx: QueryCtx,
+    streamId: string,
+    cursor: number
+  ) {
+    return await ctx.runQuery(this.component.stream.listDeltas, {
+      streamId: streamId as any,
+      cursor,
+    });
+  }
+
+  /**
+   * Abort an active stream for a conversation.
+   * Call this when the user wants to stop generation.
+   */
+  async abortStream(
+    ctx: MutationCtx,
+    conversationId: string,
+    reason: string = "User cancelled"
+  ): Promise<boolean> {
+    return await ctx.runMutation(this.component.stream.abortByConversation, {
       conversationId: conversationId as any,
+      reason,
     });
   }
 
@@ -326,6 +351,7 @@ export class DatabaseChatClient {
         model: options.model ?? this.config.model,
         systemPrompt: options.systemPrompt ?? this.config.systemPrompt,
         tools: this.tools.length > 0 ? this.tools : undefined,
+        maxMessagesForLLM: this.config.maxMessagesForLLM ?? 50,
       },
     });
   }
@@ -371,41 +397,9 @@ export class DatabaseChatClient {
   }
 
   /**
-   * Initialize streaming state. Call before starting to stream.
-   */
-  async initStream(ctx: MutationCtx, conversationId: string): Promise<void> {
-    await ctx.runMutation(this.component.stream.init, {
-      conversationId: conversationId as any,
-    });
-  }
-
-  /**
-   * Update streaming content. Call as tokens arrive.
-   * The content should be the FULL accumulated content so far.
-   */
-  async updateStream(
-    ctx: MutationCtx,
-    conversationId: string,
-    content: string
-  ): Promise<void> {
-    await ctx.runMutation(this.component.stream.update, {
-      conversationId: conversationId as any,
-      content,
-    });
-  }
-
-  /**
-   * Clear streaming state. Call when streaming is complete.
-   */
-  async clearStream(ctx: MutationCtx, conversationId: string): Promise<void> {
-    await ctx.runMutation(this.component.stream.clear, {
-      conversationId: conversationId as any,
-    });
-  }
-
-  /**
    * Get messages formatted for LLM API calls.
    * Returns messages in the format expected by most LLM APIs.
+   * Uses maxMessagesForLLM config to limit context (default: 50).
    *
    * @example
    * ```typescript
@@ -423,7 +417,11 @@ export class DatabaseChatClient {
     messages: Array<{ role: string; content: string }>;
     tools?: ReturnType<typeof formatToolsForLLM>;
   }> {
-    const messages = await this.getMessages(ctx, conversationId);
+    // Use LLM-specific limit for context window efficiency
+    const messages = await ctx.runQuery(this.component.messages.list, {
+      conversationId: conversationId as any,
+      limit: this.config.maxMessagesForLLM ?? 50,
+    });
 
     const formatted: Array<{ role: string; content: string }> = [];
 

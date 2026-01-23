@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import FingerprintJS from "@fingerprintjs/fingerprintjs";
@@ -6,6 +6,23 @@ import FingerprintJS from "@fingerprintjs/fingerprintjs";
 const MESSAGE_LIMIT = 3;
 const RESET_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
 const LOCAL_STORAGE_KEY = "demo_rate_limit";
+
+/**
+ * Check if running on localhost for development.
+ * Rate limiting is disabled on localhost.
+ */
+function isLocalhost(): boolean {
+  if (typeof window === "undefined") return false;
+  const hostname = window.location.hostname;
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    hostname.endsWith(".local")
+  );
+}
 
 interface LocalRateLimitData {
   count: number;
@@ -26,9 +43,13 @@ export function useRateLimit() {
     isLoading: true,
   });
 
+  // Bypass rate limiting on localhost
+  const bypassRateLimit = useMemo(() => isLocalhost(), []);
+
   const convexRateLimit = useQuery(
     api.rateLimit.checkRateLimit,
-    fingerprint ? { fingerprint } : "skip",
+    // Skip rate limit check on localhost
+    fingerprint && !bypassRateLimit ? { fingerprint } : "skip",
   );
 
   // Initialize fingerprint
@@ -95,6 +116,11 @@ export function useRateLimit() {
   }, [convexRateLimit, fingerprint]);
 
   const canSendMessage = useCallback(() => {
+    // Always allow on localhost
+    if (bypassRateLimit) {
+      return true;
+    }
+
     const now = Date.now();
 
     // Check if reset time has passed
@@ -103,7 +129,7 @@ export function useRateLimit() {
     }
 
     return state.remaining > 0;
-  }, [state.remaining, state.resetTime]);
+  }, [state.remaining, state.resetTime, bypassRateLimit]);
 
   // Update local state only (server handles actual increment)
   const recordMessage = useCallback(async () => {
@@ -156,13 +182,15 @@ export function useRateLimit() {
   }, [state.resetTime]);
 
   return {
-    fingerprint,
-    remaining: state.remaining,
+    fingerprint: bypassRateLimit ? null : fingerprint,
+    remaining: bypassRateLimit ? Infinity : state.remaining,
     resetTime: state.resetTime,
-    isLoading: state.isLoading,
+    isLoading: bypassRateLimit ? false : state.isLoading,
     canSendMessage,
     recordMessage,
     getResetTimeDisplay,
     messageLimit: MESSAGE_LIMIT,
+    /** True when running on localhost - rate limiting is disabled */
+    isLocalDev: bypassRateLimit,
   };
 }

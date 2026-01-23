@@ -27,7 +27,8 @@ The component provides:
 | Feature | Description |
 |---------|-------------|
 | **Conversation storage** | Stores chat history in `conversations` and `messages` tables |
-| **Streaming support** | Real-time token streaming via Convex reactive queries |
+| **Delta-based streaming** | Efficient O(n) streaming via delta accumulation |
+| **Abort support** | Stop generation mid-stream with proper cleanup |
 | **Tool calling** | LLM can call your Convex queries to fetch data |
 | **React hooks** | `useDatabaseChat`, `useMessagesWithStreaming`, etc. |
 | **Client wrapper** | `defineDatabaseChat()` for type-safe integration |
@@ -41,6 +42,22 @@ The component provides:
 | **Chat integration** | Wire tools to the component |
 | **System prompt** | Instructions for your domain |
 | **UI component** | Chat interface (or use the hooks) |
+
+### How Delta-Based Streaming Works
+
+Traditional streaming sends the full accumulated content on every update, resulting in O(n²) bandwidth:
+- Update 1: "H" (1 byte)
+- Update 2: "He" (2 bytes)
+- Update 3: "Hel" (3 bytes)
+- ...for a 1000 character response, you send ~500,000 bytes total
+
+Delta-based streaming sends only new content, resulting in O(n) bandwidth:
+- Delta 1: "H" (1 byte)
+- Delta 2: "e" (1 byte)
+- Delta 3: "l" (1 byte)
+- ...for a 1000 character response, you send ~1000 bytes total
+
+The client accumulates deltas locally and the server cleans them up when the stream finishes.
 
 ---
 
@@ -145,13 +162,34 @@ export const getMessages = query({
   },
 });
 
-// Get streaming content
-export const getStreamingContent = query({
+// Get stream state (for real-time UI updates)
+export const getStreamState = query({
   args: { conversationId: v.string() },
-  returns: v.union(v.object({ content: v.string(), updatedAt: v.number() }), v.null()),
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.databaseChat.stream.getContent, {
+    return await ctx.runQuery(components.databaseChat.stream.getStream, {
       conversationId: args.conversationId as any,
+    });
+  },
+});
+
+// Get stream deltas (efficient O(n) streaming)
+export const getStreamDeltas = query({
+  args: { streamId: v.string(), cursor: v.number() },
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.databaseChat.stream.listDeltas, {
+      streamId: args.streamId as any,
+      cursor: args.cursor,
+    });
+  },
+});
+
+// Abort a stream (stop generation)
+export const abortStream = mutation({
+  args: { conversationId: v.string(), reason: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(components.databaseChat.stream.abortByConversation, {
+      conversationId: args.conversationId as any,
+      reason: args.reason ?? "User cancelled",
     });
   },
 });
@@ -458,31 +496,38 @@ export const sendMessage = action({
         ...rawMessages.map((m) => ({ role: m.role, content: m.content })),
       ];
 
-      // 4. Initialize streaming
-      await ctx.runMutation(components.databaseChat.stream.init, {
+      // 4. Create stream for delta-based streaming
+      const streamId = await ctx.runMutation(components.databaseChat.stream.create, {
         conversationId: args.conversationId as any,
       });
 
-      // 5. Call LLM with tools
+      // 5. Call LLM with tools using delta-based streaming
+      let deltaCursor = 0;
       const response = await callLLMWithTools(
         apiKey,
         messages,
         TOOLS,
-        async (content) => {
-          await ctx.runMutation(components.databaseChat.stream.update, {
-            conversationId: args.conversationId as any,
-            content,
+        async (deltaText) => {
+          // Send only new text (delta), not accumulated content
+          const success = await ctx.runMutation(components.databaseChat.stream.addDelta, {
+            streamId,
+            start: deltaCursor,
+            end: deltaCursor + 1,
+            parts: [{ type: "text-delta", text: deltaText }],
           });
+          deltaCursor++;
+          // If addDelta returns false, stream was aborted
+          if (!success) {
+            throw new Error("Stream aborted");
+          }
         },
         async (toolName, toolArgs) => {
           return await executeToolCall(ctx, toolName, toolArgs);
         }
       );
 
-      // 6. Clear streaming
-      await ctx.runMutation(components.databaseChat.stream.clear, {
-        conversationId: args.conversationId as any,
-      });
+      // 6. Finish streaming (cleans up deltas)
+      await ctx.runMutation(components.databaseChat.stream.finish, { streamId });
 
       // 7. Save assistant response
       await ctx.runMutation(components.databaseChat.messages.add, {
@@ -493,9 +538,8 @@ export const sendMessage = action({
 
       return { success: true, content: response.content };
     } catch (error) {
-      await ctx.runMutation(components.databaseChat.stream.clear, {
-        conversationId: args.conversationId as any,
-      });
+      // Abort stream on error (if we have a streamId)
+      // Note: In production, you'd track streamId in a ref or closure
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -529,7 +573,7 @@ async function callLLMWithTools(
   apiKey: string,
   messages: Array<{ role: string; content: string }>,
   tools: any[],
-  onChunk: (content: string) => Promise<void>,
+  onDelta: (deltaText: string) => Promise<void>, // Note: receives delta, not accumulated content
   executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>
 ): Promise<{ content: string }> {
   const formattedTools = tools.map((t) => ({
@@ -552,7 +596,7 @@ async function callLLMWithTools(
       apiKey,
       currentMessages,
       formattedTools,
-      onChunk
+      onDelta
     );
 
     // If no tool calls, we're done
@@ -698,15 +742,81 @@ import {
   DatabaseChatProvider,
   useDatabaseChat,
   useMessagesWithStreaming,
-} from "@/lib/databaseChat";
+} from "@dayhaysoos/convex-database-chat";
 ```
 
-### Minimal chat component
+### Minimal chat component with delta-based streaming
+
+The component uses efficient delta-based streaming. Here's how to implement it:
 
 ```tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
+
+// Hook for delta-based streaming with client-side accumulation
+function useDeltaStreaming(conversationId: string | null) {
+  const [cursor, setCursor] = useState(0);
+  const [accumulatedContent, setAccumulatedContent] = useState("");
+  const lastStreamIdRef = useRef<string | null>(null);
+  const lastProcessedEndRef = useRef(0);
+
+  // Subscribe to stream state
+  const streamState = useQuery(
+    api.chat.getStreamState,
+    conversationId ? { conversationId } : "skip"
+  );
+
+  const streamId = streamState?.streamId ?? null;
+  const status = streamState?.status ?? null;
+
+  // Reset when stream changes
+  useEffect(() => {
+    if (streamId !== lastStreamIdRef.current) {
+      lastStreamIdRef.current = streamId;
+      lastProcessedEndRef.current = 0;
+      setCursor(0);
+      setAccumulatedContent("");
+    }
+  }, [streamId]);
+
+  // Fetch deltas from cursor
+  const deltas = useQuery(
+    api.chat.getStreamDeltas,
+    streamId && status === "streaming" ? { streamId, cursor } : "skip"
+  );
+
+  // Accumulate new deltas
+  useEffect(() => {
+    if (!deltas || deltas.length === 0) return;
+
+    const newDeltas = deltas.filter(d => d.start >= lastProcessedEndRef.current);
+    if (newDeltas.length === 0) return;
+
+    let maxEnd = lastProcessedEndRef.current;
+    let newText = "";
+
+    for (const delta of newDeltas) {
+      if (delta.end > maxEnd) maxEnd = delta.end;
+      for (const part of delta.parts) {
+        if (part.type === "text-delta" && part.text) {
+          newText += part.text;
+        }
+      }
+    }
+
+    if (newText) {
+      setAccumulatedContent(prev => prev + newText);
+    }
+    lastProcessedEndRef.current = maxEnd;
+    if (maxEnd > cursor) setCursor(maxEnd);
+  }, [deltas, cursor]);
+
+  return {
+    content: status === "streaming" && accumulatedContent ? accumulatedContent : null,
+    isStreaming: status === "streaming",
+  };
+}
 
 export function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
@@ -716,14 +826,15 @@ export function ChatWidget() {
 
   const createConversation = useMutation(api.chat.createConversation);
   const sendMessage = useAction(api.chat.sendMessage);
+  const abortStream = useMutation(api.chat.abortStream);
+  
   const messages = useQuery(
     api.chat.getMessages,
     conversationId ? { conversationId } : "skip"
   );
-  const streamingContent = useQuery(
-    api.chat.getStreamingContent,
-    conversationId ? { conversationId } : "skip"
-  );
+  
+  // Use delta-based streaming
+  const { content: streamingContent, isStreaming } = useDeltaStreaming(conversationId);
 
   // Create conversation on open
   useEffect(() => {
@@ -740,6 +851,12 @@ export function ChatWidget() {
     setIsLoading(true);
 
     await sendMessage({ conversationId, message });
+    setIsLoading(false);
+  };
+
+  const handleAbort = async () => {
+    if (!conversationId) return;
+    await abortStream({ conversationId });
     setIsLoading(false);
   };
 
@@ -762,10 +879,10 @@ export function ChatWidget() {
       ))}
       
       {/* Streaming */}
-      {streamingContent?.content && (
+      {streamingContent && (
         <div>
           <strong>assistant:</strong>
-          <MarkdownContent content={streamingContent.content} />
+          <MarkdownContent content={streamingContent} />
         </div>
       )}
 
@@ -774,15 +891,54 @@ export function ChatWidget() {
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-        disabled={isLoading}
+        disabled={isLoading || isStreaming}
       />
-      <button onClick={handleSubmit} disabled={isLoading}>
-        Send
-      </button>
+      {isLoading || isStreaming ? (
+        <button onClick={handleAbort}>Stop</button>
+      ) : (
+        <button onClick={handleSubmit} disabled={!inputValue.trim()}>
+          Send
+        </button>
+      )}
     </div>
   );
 }
 ```
+
+### Text smoothing with `useSmoothText`
+
+The `useSmoothText` hook creates a typewriter effect for streaming text, making it feel more natural instead of jumping in chunks:
+
+```tsx
+import { useSmoothText, SmoothText } from "@dayhaysoos/convex-database-chat";
+
+// Using the hook
+function StreamingMessage({ text, isStreaming }) {
+  const [visibleText] = useSmoothText(text, {
+    // Start streaming immediately for active streams
+    startStreaming: isStreaming,
+    // Optional: customize speed (default: 200 chars/sec)
+    initialCharsPerSecond: 200,
+  });
+  
+  return <div>{visibleText}</div>;
+}
+
+// Or use the component directly
+function Message({ text, isStreaming }) {
+  return (
+    <SmoothText 
+      text={text} 
+      startStreaming={isStreaming}
+    />
+  );
+}
+```
+
+**Options:**
+- `startStreaming` - Set to `true` for streaming messages, `false` for completed messages (shows immediately)
+- `initialCharsPerSecond` - Starting speed, adapts over time to match text arrival rate
+- `minDelayMs` / `maxDelayMs` - Bounds for character delay
 
 ### Rendering markdown links
 
@@ -862,30 +1018,43 @@ Format as markdown: [Item Name](viewUrl)
 | `conversations.list` | Query | List conversations by externalId |
 | `messages.add` | Mutation | Add a message |
 | `messages.list` | Query | List messages in conversation |
-| `stream.init` | Mutation | Initialize streaming state |
-| `stream.update` | Mutation | Update streaming content |
-| `stream.clear` | Mutation | Clear streaming state |
-| `stream.getContent` | Query | Get current streaming content |
+| `stream.create` | Mutation | Create a new stream for delta-based streaming |
+| `stream.addDelta` | Mutation | Add a delta (batch of parts) to a stream |
+| `stream.finish` | Mutation | Mark stream as finished, clean up deltas |
+| `stream.abort` | Mutation | Abort a stream by stream ID |
+| `stream.abortByConversation` | Mutation | Abort a stream by conversation ID |
+| `stream.getStream` | Query | Get current stream state for a conversation |
+| `stream.listDeltas` | Query | Get deltas from a cursor position |
 
-### React Hooks
+### React Hooks & Components
 
-| Hook | Description |
-|------|-------------|
-| `useDatabaseChat` | Send messages, track loading state |
-| `useConversations` | List/create conversations |
-| `useStreamingContent` | Subscribe to streaming updates |
-| `useMessagesWithStreaming` | Messages + current streaming merged |
+| Export | Type | Description |
+|--------|------|-------------|
+| `useDatabaseChat` | Hook | Send messages, track loading/streaming state, abort |
+| `useConversations` | Hook | List/create conversations |
+| `useStreamingContent` | Hook | Subscribe to streaming updates with delta accumulation |
+| `useMessagesWithStreaming` | Hook | Messages + current streaming merged |
+| `useSmoothText` | Hook | Typewriter effect for streaming text |
+| `SmoothText` | Component | Renders text with smooth typewriter effect |
+
+### Stream States
+
+| Status | Description |
+|--------|-------------|
+| `streaming` | Stream is active, deltas being written |
+| `finished` | Stream completed successfully |
+| `aborted` | Stream was cancelled (user abort, error, or timeout) |
 
 ---
 
 ## Testing
 
 ```bash
-# Backend tests
-pnpm test convex/components/databaseChat
+# Run all tests
+npm test
 
-# React hooks tests  
-pnpm test src/lib/databaseChat
+# Run tests in watch mode
+npm test -- --watch
 ```
 
 ---
@@ -893,21 +1062,23 @@ pnpm test src/lib/databaseChat
 ## File Structure
 
 ```
-convex/components/databaseChat/    # Backend
+convex/component/                  # Backend (Convex component)
 ├── convex.config.ts               # Component definition
-├── schema.ts                      # Tables
+├── schema.ts                      # Tables (conversations, messages, streamingMessages, streamDeltas)
 ├── conversations.ts               # Conversation CRUD
 ├── messages.ts                    # Message CRUD
-├── stream.ts                      # Streaming state
+├── stream.ts                      # Delta-based streaming (create, addDelta, finish, abort)
+├── deltaStreamer.ts               # DeltaStreamer class for batched writes
+├── chat.ts                        # Main send action with OpenRouter
 ├── tools.ts                       # Tool types & helpers
 ├── schemaTools.ts                 # Auto-tool generation
-├── client.ts                      # Client wrapper
+├── client.ts                      # Client wrapper (defineDatabaseChat)
 └── *.test.ts                      # Tests
 
-src/lib/databaseChat/              # Frontend
-├── react.tsx                      # React hooks
+src/                               # Frontend (React)
+├── react.tsx                      # React hooks (useDatabaseChat, useConversations, etc.)
 ├── react.test.tsx                 # Hook tests
-└── index.ts                       # Re-exports
+└── index.ts                       # Package exports
 ```
 
 ---

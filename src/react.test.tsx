@@ -17,6 +17,8 @@ import {
   useConversations,
   useStreamingContent,
   useMessagesWithStreaming,
+  useSmoothText,
+  SmoothText,
 } from "./react";
 
 describe("DatabaseChat React exports", () => {
@@ -43,6 +45,16 @@ describe("DatabaseChat React exports", () => {
   it("should export useMessagesWithStreaming hook", () => {
     expect(useMessagesWithStreaming).toBeDefined();
     expect(typeof useMessagesWithStreaming).toBe("function");
+  });
+
+  it("should export useSmoothText hook", () => {
+    expect(useSmoothText).toBeDefined();
+    expect(typeof useSmoothText).toBe("function");
+  });
+
+  it("should export SmoothText component", () => {
+    expect(SmoothText).toBeDefined();
+    expect(typeof SmoothText).toBe("function");
   });
 });
 

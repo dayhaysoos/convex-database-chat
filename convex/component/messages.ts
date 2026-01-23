@@ -55,11 +55,13 @@ export const add = mutation({
 });
 
 /**
- * List messages in a conversation (oldest first for chat display)
+ * List messages in a conversation (oldest first for chat display).
+ * Returns the most recent `limit` messages, bounded to prevent unbounded queries.
  */
 export const list = query({
   args: {
     conversationId: v.id("conversations"),
+    limit: v.optional(v.number()),
   },
   returns: v.array(
     v.object({
@@ -74,13 +76,22 @@ export const list = query({
     })
   ),
   handler: async (ctx, args) => {
-    return await ctx.db
+    // Ensure limit is a positive integer with reasonable bounds
+    // Handle NaN case by defaulting to 100
+    const rawLimit = args.limit ?? 100;
+    const safeLimit = Number.isNaN(rawLimit) ? 100 : rawLimit;
+    const limit = Math.min(1000, Math.max(1, Math.floor(safeLimit)));
+
+    // Fetch most recent N messages (desc order), then reverse for chronological display
+    const messages = await ctx.db
       .query("messages")
       .withIndex("by_conversation", (q) =>
         q.eq("conversationId", args.conversationId)
       )
-      .order("asc") // Oldest first for chat display
-      .collect();
+      .order("desc")
+      .take(limit);
+
+    return messages.reverse();
   },
 });
 
