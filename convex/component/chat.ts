@@ -8,7 +8,7 @@ import {
   validateToolArgs,
 } from "./tools";
 import type { DatabaseChatTool } from "./tools";
-import { DeltaStreamer, type StreamPart } from "./deltaStreamer";
+import { DeltaStreamer } from "./deltaStreamer";
 
 /**
  * Send a message and get a streaming response.
