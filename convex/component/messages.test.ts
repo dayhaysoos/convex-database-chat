@@ -203,6 +203,43 @@ describe("databaseChat messages", () => {
     });
   });
 
+  describe("listForExternalId", () => {
+    it("should return messages when externalId matches", async () => {
+      const t = setupTest();
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+      });
+
+      await t.mutation(api.messages.add, {
+        conversationId,
+        role: "user",
+        content: "Scoped message",
+      });
+
+      const messages = await t.query(api.messages.listForExternalId, {
+        conversationId,
+        externalId: "user:alice",
+      });
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe("Scoped message");
+    });
+
+    it("should throw Not found when externalId mismatches", async () => {
+      const t = setupTest();
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+      });
+
+      await expect(
+        t.query(api.messages.listForExternalId, {
+          conversationId,
+          externalId: "user:bob",
+        })
+      ).rejects.toThrow("Not found");
+    });
+  });
+
   describe("getLatest", () => {
     it("should return null for conversation with no messages", async () => {
       const t = setupTest();
@@ -238,6 +275,61 @@ describe("databaseChat messages", () => {
       expect(latest).not.toBeNull();
       expect(latest?.content).toBe("Latest");
       expect(latest?.role).toBe("user");
+    });
+  });
+
+  describe("getLatestForExternalId", () => {
+    it("should return the most recent message when externalId matches", async () => {
+      const t = setupTest();
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+      });
+
+      await t.mutation(api.messages.add, {
+        conversationId,
+        role: "user",
+        content: "First",
+      });
+      await t.mutation(api.messages.add, {
+        conversationId,
+        role: "assistant",
+        content: "Latest",
+      });
+
+      const latest = await t.query(api.messages.getLatestForExternalId, {
+        conversationId,
+        externalId: "user:alice",
+      });
+
+      expect(latest?.content).toBe("Latest");
+    });
+
+    it("should return null when no messages exist", async () => {
+      const t = setupTest();
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+      });
+
+      const latest = await t.query(api.messages.getLatestForExternalId, {
+        conversationId,
+        externalId: "user:alice",
+      });
+
+      expect(latest).toBeNull();
+    });
+
+    it("should throw Not found when externalId mismatches", async () => {
+      const t = setupTest();
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+      });
+
+      await expect(
+        t.query(api.messages.getLatestForExternalId, {
+          conversationId,
+          externalId: "user:bob",
+        })
+      ).rejects.toThrow("Not found");
     });
   });
 });

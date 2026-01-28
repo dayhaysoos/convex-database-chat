@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import {
   databaseChatToolValidator,
   formatToolsForLLM,
@@ -9,6 +10,32 @@ import {
 } from "./tools";
 import type { DatabaseChatTool } from "./tools";
 import { DeltaStreamer } from "./deltaStreamer";
+
+const sendConfigValidator = v.object({
+  apiKey: v.string(),
+  model: v.optional(v.string()),
+  systemPrompt: v.optional(v.string()),
+  // Tools the LLM can call
+  tools: v.optional(v.array(databaseChatToolValidator)),
+  // Max messages to include in LLM context (default: 50)
+  maxMessagesForLLM: v.optional(v.number()),
+});
+
+const sendReturnValidator = v.object({
+  success: v.boolean(),
+  content: v.optional(v.string()),
+  error: v.optional(v.string()),
+  // Tool calls that were made (for debugging/logging)
+  toolCalls: v.optional(
+    v.array(
+      v.object({
+        name: v.string(),
+        args: v.any(),
+        result: v.any(),
+      })
+    )
+  ),
+});
 
 /**
  * Send a message and get a streaming response.
@@ -22,225 +49,250 @@ export const send = action({
     conversationId: v.id("conversations"),
     message: v.string(),
     // Config passed from the app
-    config: v.object({
-      apiKey: v.string(),
-      model: v.optional(v.string()),
-      systemPrompt: v.optional(v.string()),
-      // Tools the LLM can call
-      tools: v.optional(v.array(databaseChatToolValidator)),
-      // Max messages to include in LLM context (default: 50)
-      maxMessagesForLLM: v.optional(v.number()),
-    }),
+    config: sendConfigValidator,
   },
-  returns: v.object({
-    success: v.boolean(),
-    content: v.optional(v.string()),
-    error: v.optional(v.string()),
-    // Tool calls that were made (for debugging/logging)
-    toolCalls: v.optional(
-      v.array(
-        v.object({
-          name: v.string(),
-          args: v.any(),
-          result: v.any(),
-        })
-      )
-    ),
-  }),
+  returns: sendReturnValidator,
   handler: async (ctx, args) => {
-    const { conversationId, message, config } = args;
-    const tools = (config.tools ?? []) as DatabaseChatTool[];
-    const executedToolCalls: Array<{
-      name: string;
-      args: unknown;
-      result: unknown;
-    }> = [];
+    return await sendInternal(ctx, args);
+  },
+});
 
-    // Create DeltaStreamer for efficient streaming (O(n) instead of O(n²) bandwidth)
-    const streamer = new DeltaStreamer(ctx, api, conversationId, {
-      throttleMs: 100,
-      onAbort: async (reason) => {
-        console.warn("Stream aborted:", reason);
-      },
+/**
+ * Send a message scoped to externalId.
+ * Throws "Not found" if the conversation is missing or not owned by externalId.
+ */
+export const sendForExternalId = action({
+  args: {
+    conversationId: v.id("conversations"),
+    externalId: v.string(),
+    message: v.string(),
+    config: sendConfigValidator,
+  },
+  returns: sendReturnValidator,
+  handler: async (ctx, args) => {
+    await ctx.runQuery(api.conversations.getForExternalId, {
+      conversationId: args.conversationId,
+      externalId: args.externalId,
+    });
+    return await sendInternal(ctx, {
+      conversationId: args.conversationId,
+      message: args.message,
+      config: args.config,
+    });
+  },
+});
+
+async function sendInternal(
+  ctx: any,
+  args: {
+    conversationId: Id<"conversations">;
+    message: string;
+    config: {
+      apiKey: string;
+      model?: string;
+      systemPrompt?: string;
+      tools?: Array<{
+        name: string;
+        description: string;
+        parameters: unknown;
+        handler: string;
+      }>;
+      maxMessagesForLLM?: number;
+    };
+  }
+) {
+  const { conversationId, message, config } = args;
+  const tools = (config.tools ?? []) as DatabaseChatTool[];
+  const executedToolCalls: Array<{
+    name: string;
+    args: unknown;
+    result: unknown;
+  }> = [];
+
+  // Create DeltaStreamer for efficient streaming (O(n) instead of O(n²) bandwidth)
+  const streamer = new DeltaStreamer(ctx, api, conversationId, {
+    throttleMs: 100,
+    onAbort: async (reason) => {
+      console.warn("Stream aborted:", reason);
+    },
+  });
+
+  try {
+    // 1. Save the user message
+    await ctx.runMutation(api.messages.add, {
+      conversationId,
+      role: "user",
+      content: message,
     });
 
-    try {
-      // 1. Save the user message
+    // 2. Get conversation history (bounded by limit)
+    const messagesLimit = config.maxMessagesForLLM ?? 50;
+    const messages = await ctx.runQuery(api.messages.list, {
+      conversationId,
+      limit: messagesLimit,
+    });
+
+    // 3. Initialize streaming (creates stream record)
+    await streamer.getStreamId();
+
+    // 4. Build messages for OpenRouter
+    const systemPrompt = buildSystemPrompt(
+      config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      tools
+    );
+    const openRouterMessages = buildMessages(messages, systemPrompt);
+
+    // 5. Call OpenRouter with streaming (and tools if provided)
+    // DeltaStreamer batches token writes for efficiency
+    let response = await callOpenRouter({
+      apiKey: config.apiKey,
+      model: config.model ?? "openai/gpt-4o",
+      messages: openRouterMessages,
+      tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
+      onChunk: async (delta: string) => {
+        // Add delta as a text part - DeltaStreamer batches these
+        await streamer.addParts([{ type: "text-delta", text: delta }]);
+      },
+      abortSignal: streamer.abortController.signal,
+    });
+
+    // 6. Handle tool calls (loop until no more tool calls)
+    let loopCount = 0;
+    const MAX_TOOL_LOOPS = 5; // Prevent infinite loops
+
+    while (
+      response.toolCalls &&
+      response.toolCalls.length > 0 &&
+      loopCount < MAX_TOOL_LOOPS &&
+      !streamer.abortController.signal.aborted
+    ) {
+      loopCount++;
+
+      // Execute each tool call
+      const toolResults: Array<{ toolCallId: string; result: string }> = [];
+
+      for (const toolCall of response.toolCalls) {
+        const tool = findTool(tools, toolCall.name);
+
+        if (!tool) {
+          toolResults.push({
+            toolCallId: toolCall.id,
+            result: JSON.stringify({
+              error: `Unknown tool: ${toolCall.name}`,
+            }),
+          });
+          continue;
+        }
+
+        // Parse and validate arguments
+        let parsedArgs: Record<string, unknown>;
+        try {
+          parsedArgs = JSON.parse(toolCall.arguments);
+        } catch {
+          toolResults.push({
+            toolCallId: toolCall.id,
+            result: JSON.stringify({ error: "Invalid JSON arguments" }),
+          });
+          continue;
+        }
+
+        const validationError = validateToolArgs(tool, parsedArgs);
+        if (validationError) {
+          toolResults.push({
+            toolCallId: toolCall.id,
+            result: JSON.stringify({ error: validationError }),
+          });
+          continue;
+        }
+
+        // Execute the tool
+        try {
+          const result = await ctx.runQuery(tool.handler as any, parsedArgs);
+          toolResults.push({
+            toolCallId: toolCall.id,
+            result: JSON.stringify(result),
+          });
+          executedToolCalls.push({
+            name: toolCall.name,
+            args: parsedArgs,
+            result,
+          });
+        } catch (error) {
+          const errorMsg =
+            error instanceof Error ? error.message : "Tool execution failed";
+          toolResults.push({
+            toolCallId: toolCall.id,
+            result: JSON.stringify({ error: errorMsg }),
+          });
+        }
+      }
+
+      // Save the assistant message with tool calls
       await ctx.runMutation(api.messages.add, {
         conversationId,
-        role: "user",
-        content: message,
+        role: "assistant",
+        content: response.content || "",
+        toolCalls: response.toolCalls,
       });
 
-      // 2. Get conversation history (bounded by limit)
-      const messagesLimit = config.maxMessagesForLLM ?? 50;
-      const messages = await ctx.runQuery(api.messages.list, {
+      // Save tool results
+      await ctx.runMutation(api.messages.add, {
+        conversationId,
+        role: "tool",
+        content: "", // Tool messages primarily carry results
+        toolResults,
+      });
+
+      // Build updated messages for next LLM call
+      const updatedMessages = await ctx.runQuery(api.messages.list, {
         conversationId,
         limit: messagesLimit,
       });
-
-      // 3. Initialize streaming (creates stream record)
-      await streamer.getStreamId();
-
-      // 4. Build messages for OpenRouter
-      const systemPrompt = buildSystemPrompt(
-        config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-        tools
+      const nextOpenRouterMessages = buildMessagesWithTools(
+        updatedMessages,
+        systemPrompt
       );
-      const openRouterMessages = buildMessages(messages, systemPrompt);
 
-      // 5. Call OpenRouter with streaming (and tools if provided)
-      // DeltaStreamer batches token writes for efficiency
-      let response = await callOpenRouter({
+      // Call LLM again with tool results
+      response = await callOpenRouter({
         apiKey: config.apiKey,
         model: config.model ?? "openai/gpt-4o",
-        messages: openRouterMessages,
-        tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
+        messages: nextOpenRouterMessages,
+        tools: formatToolsForLLM(tools),
         onChunk: async (delta: string) => {
-          // Add delta as a text part - DeltaStreamer batches these
           await streamer.addParts([{ type: "text-delta", text: delta }]);
         },
         abortSignal: streamer.abortController.signal,
       });
-
-      // 6. Handle tool calls (loop until no more tool calls)
-      let loopCount = 0;
-      const MAX_TOOL_LOOPS = 5; // Prevent infinite loops
-
-      while (
-        response.toolCalls &&
-        response.toolCalls.length > 0 &&
-        loopCount < MAX_TOOL_LOOPS &&
-        !streamer.abortController.signal.aborted
-      ) {
-        loopCount++;
-
-        // Execute each tool call
-        const toolResults: Array<{ toolCallId: string; result: string }> = [];
-
-        for (const toolCall of response.toolCalls) {
-          const tool = findTool(tools, toolCall.name);
-
-          if (!tool) {
-            toolResults.push({
-              toolCallId: toolCall.id,
-              result: JSON.stringify({
-                error: `Unknown tool: ${toolCall.name}`,
-              }),
-            });
-            continue;
-          }
-
-          // Parse and validate arguments
-          let parsedArgs: Record<string, unknown>;
-          try {
-            parsedArgs = JSON.parse(toolCall.arguments);
-          } catch {
-            toolResults.push({
-              toolCallId: toolCall.id,
-              result: JSON.stringify({ error: "Invalid JSON arguments" }),
-            });
-            continue;
-          }
-
-          const validationError = validateToolArgs(tool, parsedArgs);
-          if (validationError) {
-            toolResults.push({
-              toolCallId: toolCall.id,
-              result: JSON.stringify({ error: validationError }),
-            });
-            continue;
-          }
-
-          // Execute the tool
-          try {
-            const result = await ctx.runQuery(tool.handler as any, parsedArgs);
-            toolResults.push({
-              toolCallId: toolCall.id,
-              result: JSON.stringify(result),
-            });
-            executedToolCalls.push({
-              name: toolCall.name,
-              args: parsedArgs,
-              result,
-            });
-          } catch (error) {
-            const errorMsg =
-              error instanceof Error ? error.message : "Tool execution failed";
-            toolResults.push({
-              toolCallId: toolCall.id,
-              result: JSON.stringify({ error: errorMsg }),
-            });
-          }
-        }
-
-        // Save the assistant message with tool calls
-        await ctx.runMutation(api.messages.add, {
-          conversationId,
-          role: "assistant",
-          content: response.content || "",
-          toolCalls: response.toolCalls,
-        });
-
-        // Save tool results
-        await ctx.runMutation(api.messages.add, {
-          conversationId,
-          role: "tool",
-          content: "", // Tool messages primarily carry results
-          toolResults,
-        });
-
-        // Build updated messages for next LLM call
-        const updatedMessages = await ctx.runQuery(api.messages.list, {
-          conversationId,
-          limit: messagesLimit,
-        });
-        const nextOpenRouterMessages = buildMessagesWithTools(
-          updatedMessages,
-          systemPrompt
-        );
-
-        // Call LLM again with tool results
-        response = await callOpenRouter({
-          apiKey: config.apiKey,
-          model: config.model ?? "openai/gpt-4o",
-          messages: nextOpenRouterMessages,
-          tools: formatToolsForLLM(tools),
-          onChunk: async (delta: string) => {
-            await streamer.addParts([{ type: "text-delta", text: delta }]);
-          },
-          abortSignal: streamer.abortController.signal,
-        });
-      }
-
-      // 7. Finish streaming (this cleans up deltas)
-      await streamer.finish();
-
-      // 8. Save final assistant message
-      await ctx.runMutation(api.messages.add, {
-        conversationId,
-        role: "assistant",
-        content: response.content,
-      });
-
-      return {
-        success: true,
-        content: response.content,
-        toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
-      };
-    } catch (error) {
-      // Abort streaming on error
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      await streamer.fail(errorMessage);
-
-      return {
-        success: false,
-        error: errorMessage,
-      };
     }
-  },
-});
+
+    // 7. Finish streaming (this cleans up deltas)
+    await streamer.finish();
+
+    // 8. Save final assistant message
+    await ctx.runMutation(api.messages.add, {
+      conversationId,
+      role: "assistant",
+      content: response.content,
+    });
+
+    return {
+      success: true,
+      content: response.content,
+      toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
+    };
+  } catch (error) {
+    // Abort streaming on error
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    await streamer.fail(errorMessage);
+
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
+}
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that can search and query a database.
 When users ask questions, use the available tools to find relevant information.

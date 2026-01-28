@@ -98,6 +98,40 @@ describe("databaseChat conversations", () => {
     });
   });
 
+  describe("getForExternalId", () => {
+    it("should return the conversation when externalId matches", async () => {
+      const t = setupTest();
+
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+        title: "Scoped Chat",
+      });
+
+      const result = await t.query(api.conversations.getForExternalId, {
+        conversationId,
+        externalId: "user:alice",
+      });
+
+      expect(result._id).toBe(conversationId);
+      expect(result.externalId).toBe("user:alice");
+    });
+
+    it("should throw Not found when externalId mismatches", async () => {
+      const t = setupTest();
+
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:alice",
+      });
+
+      await expect(
+        t.query(api.conversations.getForExternalId, {
+          conversationId,
+          externalId: "user:bob",
+        })
+      ).rejects.toThrow("Not found");
+    });
+  });
+
   describe("list", () => {
     it("should return empty array when no conversations exist", async () => {
       const t = setupTest();

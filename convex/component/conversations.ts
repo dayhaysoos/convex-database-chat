@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { requireConversationExternalId } from "./access";
 
 /**
  * Create a new conversation
@@ -41,6 +42,32 @@ export const get = query({
   ),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.conversationId);
+  },
+});
+
+/**
+ * Get a conversation by ID, scoped to externalId.
+ * Throws "Not found" if the conversation is missing or not owned by externalId.
+ */
+export const getForExternalId = query({
+  args: {
+    conversationId: v.id("conversations"),
+    externalId: v.string(),
+  },
+  returns: v.object({
+    _id: v.id("conversations"),
+    _creationTime: v.number(),
+    externalId: v.string(),
+    title: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    return await requireConversationExternalId(
+      ctx,
+      args.conversationId,
+      args.externalId
+    );
   },
 });
 
