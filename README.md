@@ -1007,6 +1007,28 @@ Format as markdown: [Item Name](viewUrl)
 
 ---
 
+## Security & Multi-tenant Access
+
+This component is auth-agnostic. You must supply `externalId` from your own
+auth system and never accept it directly from untrusted clients.
+
+Use the scoped endpoints below to enforce ownership checks server-side. These
+throw `Not found` if the conversation or stream is missing or not owned by the
+provided `externalId` to avoid leaking existence across tenants.
+
+- `conversations.getForExternalId`
+- `messages.listForExternalId`
+- `messages.getLatestForExternalId`
+- `stream.getStreamForExternalId`
+- `stream.listDeltasForExternalId`
+- `stream.abortForExternalId`
+- `chat.sendForExternalId`
+
+Unscoped endpoints are low-level helpers and should only be used if you already
+enforce access control in your app.
+
+---
+
 ## API Reference
 
 ### Component Functions
@@ -1015,16 +1037,24 @@ Format as markdown: [Item Name](viewUrl)
 |----------|------|-------------|
 | `conversations.create` | Mutation | Create a new conversation |
 | `conversations.get` | Query | Get conversation by ID |
+| `conversations.getForExternalId` | Query | Get conversation by ID scoped to externalId |
 | `conversations.list` | Query | List conversations by externalId |
 | `messages.add` | Mutation | Add a message |
 | `messages.list` | Query | List messages in conversation |
+| `messages.listForExternalId` | Query | List messages scoped to externalId |
+| `messages.getLatestForExternalId` | Query | Get latest message scoped to externalId |
 | `stream.create` | Mutation | Create a new stream for delta-based streaming |
 | `stream.addDelta` | Mutation | Add a delta (batch of parts) to a stream |
 | `stream.finish` | Mutation | Mark stream as finished, clean up deltas |
 | `stream.abort` | Mutation | Abort a stream by stream ID |
 | `stream.abortByConversation` | Mutation | Abort a stream by conversation ID |
+| `stream.abortForExternalId` | Mutation | Abort a stream by conversation ID scoped to externalId |
 | `stream.getStream` | Query | Get current stream state for a conversation |
 | `stream.listDeltas` | Query | Get deltas from a cursor position |
+| `stream.getStreamForExternalId` | Query | Get current stream state scoped to externalId |
+| `stream.listDeltasForExternalId` | Query | Get deltas scoped to externalId |
+| `chat.send` | Action | Send a message via OpenRouter |
+| `chat.sendForExternalId` | Action | Send a message scoped to externalId |
 
 ### React Hooks & Components
 

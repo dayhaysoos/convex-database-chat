@@ -263,6 +263,98 @@ describe("databaseChat streaming", () => {
     });
   });
 
+  describe("scoped access", () => {
+    it("getStreamForExternalId returns state when externalId matches", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+
+      const state = await t.query(api.stream.getStreamForExternalId, {
+        conversationId,
+        externalId: "user:test",
+      });
+
+      expect(state?.streamId).toBe(streamId);
+      expect(state?.status).toBe("streaming");
+    });
+
+    it("getStreamForExternalId throws Not found on mismatch", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+
+      await expect(
+        t.query(api.stream.getStreamForExternalId, {
+          conversationId,
+          externalId: "user:other",
+        })
+      ).rejects.toThrow("Not found");
+    });
+
+    it("listDeltasForExternalId returns deltas when externalId matches", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 0,
+        end: 1,
+        parts: [{ type: "text-delta", text: "Hello" }],
+      });
+
+      const deltas = await t.query(api.stream.listDeltasForExternalId, {
+        streamId,
+        cursor: 0,
+        externalId: "user:test",
+      });
+
+      expect(deltas).toHaveLength(1);
+      expect(deltas[0].parts[0]).toEqual({ type: "text-delta", text: "Hello" });
+    });
+
+    it("listDeltasForExternalId throws Not found on mismatch", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+
+      await expect(
+        t.query(api.stream.listDeltasForExternalId, {
+          streamId,
+          cursor: 0,
+          externalId: "user:other",
+        })
+      ).rejects.toThrow("Not found");
+    });
+
+    it("abortForExternalId aborts when externalId matches", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      await t.mutation(api.stream.create, { conversationId });
+
+      const aborted = await t.mutation(api.stream.abortForExternalId, {
+        conversationId,
+        externalId: "user:test",
+        reason: "stop",
+      });
+
+      expect(aborted).toBe(true);
+    });
+
+    it("abortForExternalId throws Not found on mismatch", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      await t.mutation(api.stream.create, { conversationId });
+
+      await expect(
+        t.mutation(api.stream.abortForExternalId, {
+          conversationId,
+          externalId: "user:other",
+          reason: "stop",
+        })
+      ).rejects.toThrow("Not found");
+    });
+  });
+
   describe("getStream", () => {
     it("should return current stream state", async () => {
       const t = setupTest();

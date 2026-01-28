@@ -6,6 +6,10 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import {
+  requireConversationExternalId,
+  requireStreamExternalId,
+} from "./access";
 
 // Timeout configuration
 const TIMEOUT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -258,45 +262,36 @@ export const abortByConversation = mutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const stream = await ctx.db
-      .query("streamingMessages")
-      .withIndex("by_conversation_status", (q) =>
-        q.eq("conversationId", args.conversationId).eq("status", "streaming")
-      )
-      .first();
-
-    if (!stream) {
-      return false;
-    }
-
-    // Cancel timeout
-    if (stream.timeoutFnId) {
-      try {
-        await ctx.scheduler.cancel(stream.timeoutFnId);
-      } catch {
-        // Timeout may have already fired
-      }
-    }
-
-    // Mark as aborted
-    await ctx.db.patch(stream._id, {
-      status: "aborted",
-      abortReason: args.reason,
-      endedAt: Date.now(),
-      timeoutFnId: undefined,
-    });
-
-    // Delete all deltas
-    await deleteStreamDeltas(ctx, stream._id);
-
-    // Schedule cleanup of the stream record
-    await ctx.scheduler.runAfter(
-      CLEANUP_DELAY_MS,
-      internal.stream.cleanupStream,
-      { streamId: stream._id }
+    return await abortStreamByConversationId(
+      ctx,
+      args.conversationId,
+      args.reason
     );
+  },
+});
 
-    return true;
+/**
+ * Abort a stream by conversation ID, scoped to externalId.
+ * Throws "Not found" if the conversation is missing or not owned by externalId.
+ */
+export const abortForExternalId = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    externalId: v.string(),
+    reason: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    await requireConversationExternalId(
+      ctx,
+      args.conversationId,
+      args.externalId
+    );
+    return await abortStreamByConversationId(
+      ctx,
+      args.conversationId,
+      args.reason
+    );
   },
 });
 
@@ -324,44 +319,40 @@ export const getStream = query({
     v.null()
   ),
   handler: async (ctx, args) => {
-    // First, try to find an active streaming stream
-    const activeStream = await ctx.db
-      .query("streamingMessages")
-      .withIndex("by_conversation_status", (q) =>
-        q.eq("conversationId", args.conversationId).eq("status", "streaming")
-      )
-      .first();
+    return await getStreamState(ctx, args.conversationId);
+  },
+});
 
-    if (activeStream) {
-      return {
-        streamId: activeStream._id,
-        status: activeStream.status,
-        startedAt: activeStream.startedAt,
-        endedAt: activeStream.endedAt,
-        abortReason: activeStream.abortReason,
-      };
-    }
-
-    // If no active stream, find the most recent one (for status updates)
-    const stream = await ctx.db
-      .query("streamingMessages")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", args.conversationId)
-      )
-      .order("desc")
-      .first();
-
-    if (!stream) {
-      return null;
-    }
-
-    return {
-      streamId: stream._id,
-      status: stream.status,
-      startedAt: stream.startedAt,
-      endedAt: stream.endedAt,
-      abortReason: stream.abortReason,
-    };
+/**
+ * Get the current stream state for a conversation scoped to externalId.
+ * Throws "Not found" if the conversation is missing or not owned by externalId.
+ */
+export const getStreamForExternalId = query({
+  args: {
+    conversationId: v.id("conversations"),
+    externalId: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      streamId: v.id("streamingMessages"),
+      status: v.union(
+        v.literal("streaming"),
+        v.literal("finished"),
+        v.literal("aborted")
+      ),
+      startedAt: v.number(),
+      endedAt: v.optional(v.number()),
+      abortReason: v.optional(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    await requireConversationExternalId(
+      ctx,
+      args.conversationId,
+      args.externalId
+    );
+    return await getStreamState(ctx, args.conversationId);
   },
 });
 
@@ -382,21 +373,30 @@ export const listDeltas = query({
     })
   ),
   handler: async (ctx, args) => {
-    // Ensure cursor is non-negative for defensive programming
-    const cursor = Math.max(0, args.cursor);
+    return await listStreamDeltas(ctx, args.streamId, args.cursor);
+  },
+});
 
-    const deltas = await ctx.db
-      .query("streamDeltas")
-      .withIndex("by_stream_cursor", (q) =>
-        q.eq("streamId", args.streamId).gte("start", cursor)
-      )
-      .take(MAX_DELTAS_PER_QUERY);
-
-    return deltas.map((d) => ({
-      start: d.start,
-      end: d.end,
-      parts: d.parts,
-    }));
+/**
+ * List deltas for a stream scoped to externalId.
+ * Throws "Not found" if the stream is missing or not owned by externalId.
+ */
+export const listDeltasForExternalId = query({
+  args: {
+    streamId: v.id("streamingMessages"),
+    externalId: v.string(),
+    cursor: v.number(),
+  },
+  returns: v.array(
+    v.object({
+      start: v.number(),
+      end: v.number(),
+      parts: v.array(streamPartValidator),
+    })
+  ),
+  handler: async (ctx, args) => {
+    await requireStreamExternalId(ctx, args.streamId, args.externalId);
+    return await listStreamDeltas(ctx, args.streamId, args.cursor);
   },
 });
 
@@ -525,4 +525,112 @@ async function deleteStreamDeltas(
   // cleanupStream mutation, which will re-run deleteStreamDeltas
 }
 
+async function getStreamState(
+  ctx: { db: any },
+  conversationId: Id<"conversations">
+) {
+  // First, try to find an active streaming stream
+  const activeStream = await ctx.db
+    .query("streamingMessages")
+    .withIndex("by_conversation_status", (q: any) =>
+      q.eq("conversationId", conversationId).eq("status", "streaming")
+    )
+    .first();
 
+  if (activeStream) {
+    return {
+      streamId: activeStream._id,
+      status: activeStream.status,
+      startedAt: activeStream.startedAt,
+      endedAt: activeStream.endedAt,
+      abortReason: activeStream.abortReason,
+    };
+  }
+
+  // If no active stream, find the most recent one (for status updates)
+  const stream = await ctx.db
+    .query("streamingMessages")
+    .withIndex("by_conversation", (q: any) =>
+      q.eq("conversationId", conversationId)
+    )
+    .order("desc")
+    .first();
+
+  if (!stream) {
+    return null;
+  }
+
+  return {
+    streamId: stream._id,
+    status: stream.status,
+    startedAt: stream.startedAt,
+    endedAt: stream.endedAt,
+    abortReason: stream.abortReason,
+  };
+}
+
+async function listStreamDeltas(
+  ctx: { db: any },
+  streamId: Id<"streamingMessages">,
+  cursor: number
+) {
+  // Ensure cursor is non-negative for defensive programming
+  const safeCursor = Math.max(0, cursor);
+
+  const deltas = await ctx.db
+    .query("streamDeltas")
+    .withIndex("by_stream_cursor", (q: any) =>
+      q.eq("streamId", streamId).gte("start", safeCursor)
+    )
+    .take(MAX_DELTAS_PER_QUERY);
+
+  return deltas.map((d: { start: number; end: number; parts: any }) => ({
+    start: d.start,
+    end: d.end,
+    parts: d.parts,
+  }));
+}
+
+async function abortStreamByConversationId(
+  ctx: { db: any; scheduler: any },
+  conversationId: Id<"conversations">,
+  reason: string
+) {
+  const stream = await ctx.db
+    .query("streamingMessages")
+    .withIndex("by_conversation_status", (q: any) =>
+      q.eq("conversationId", conversationId).eq("status", "streaming")
+    )
+    .first();
+
+  if (!stream) {
+    return false;
+  }
+
+  // Cancel timeout
+  if (stream.timeoutFnId) {
+    try {
+      await ctx.scheduler.cancel(stream.timeoutFnId);
+    } catch {
+      // Timeout may have already fired
+    }
+  }
+
+  // Mark as aborted
+  await ctx.db.patch(stream._id, {
+    status: "aborted",
+    abortReason: reason,
+    endedAt: Date.now(),
+    timeoutFnId: undefined,
+  });
+
+  // Delete all deltas
+  await deleteStreamDeltas(ctx, stream._id);
+
+  // Schedule cleanup of the stream record
+  await ctx.scheduler.runAfter(CLEANUP_DELAY_MS, internal.stream.cleanupStream, {
+    streamId: stream._id,
+  });
+
+  return true;
+}
