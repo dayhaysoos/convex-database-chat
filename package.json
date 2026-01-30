@@ -1,6 +1,6 @@
 {
   "name": "@dayhaysoos/convex-database-chat",
-  "version": "0.2.0-alpha.1",
+  "version": "0.3.0-alpha.0",
   "description": "A Convex component for adding natural language database queries to your app.",
   "type": "module",
   "main": "./dist/src/index.js",
