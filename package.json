@@ -10,6 +10,10 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
     },
+    "./vector": {
+      "types": "./dist/src/vector.d.ts",
+      "import": "./dist/src/vector.js"
+    },
     "./test": "./src/test.ts",
     "./_generated/component.js": {
       "types": "./dist/convex/component/_generated/component.d.ts",
@@ -35,6 +39,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
     "prepublishOnly": "pnpm build",
     "test": "vitest",
     "typecheck": "tsc --noEmit",

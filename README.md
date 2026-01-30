@@ -222,9 +222,14 @@ interface Tool {
     }>;
     required?: string[];
   };
-  handler: string;        // Name of your Convex query
+  handlerType?: "query" | "mutation" | "action"; // Default: "query"
+  handler: string;        // Function handle string (createFunctionHandle)
 }
 ```
+
+Note: When passing tools to the component chat action, `handler` should be a
+function handle created via `createFunctionHandle(...)`. Set `handlerType` to
+"action" for tools that run `ctx.vectorSearch`.
 
 ### Example: E-commerce - Search products
 
@@ -975,6 +980,72 @@ function MarkdownContent({ content }: { content: string }) {
 ---
 
 ## Patterns
+
+### Vector search helpers
+
+Use the helper utilities to reduce boilerplate while keeping your schema and
+actions fully in your app code:
+
+```typescript
+// convex/semanticSearch.ts
+import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { v } from "convex/values";
+import {
+  generateEmbedding,
+  formatVectorResults,
+} from "@dayhaysoos/convex-database-chat/vector";
+
+export const semanticSearchCandidates = action({
+  args: {
+    query: v.string(),
+    orgId: v.id("orgs"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const embedding = await generateEmbedding({
+      apiKey: process.env.OPENROUTER_API_KEY!,
+      text: args.query,
+      // model: "your-embedding-model",
+    });
+
+    const results = await ctx.vectorSearch("applications", "by_resume_embedding", {
+      vector: embedding,
+      limit: args.limit ?? 20,
+    });
+
+    const docs = await ctx.runQuery(internal.semanticSearch.fetchByIds, {
+      ids: results.map((r) => r._id),
+    });
+
+    return formatVectorResults(results, docs, {
+      includeScore: true,
+      snippetLength: 200,
+      fields: ["candidateName", "topStrengths", "viewUrl"],
+    });
+  },
+});
+```
+
+**Notes:**
+- Vector search is only available in actions.
+- Vector index dimensions must match the embedding model you choose.
+- Use `fields` to avoid returning large vector fields like embeddings.
+- Set `fields: []` to include no document fields (only `_id` and optional `_score`).
+
+You can also define a tool entry with the helper:
+
+```typescript
+import { defineVectorSearchTool } from "@dayhaysoos/convex-database-chat/vector";
+
+const TOOLS = [
+  defineVectorSearchTool({
+    name: "semanticSearch",
+    description: "Find candidates by meaning or concept",
+    handler: "semanticSearchCandidates",
+  }),
+];
+```
 
 ### Including actionable URLs
 

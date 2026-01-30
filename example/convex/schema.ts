@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { DEFAULT_EMBEDDING_DIMENSIONS } from "@dayhaysoos/convex-database-chat/vector";
 
 export default defineSchema({
   products: defineTable({
@@ -9,9 +10,14 @@ export default defineSchema({
     price: v.number(),
     stock: v.number(),
     imageUrl: v.optional(v.string()),
+    embedding: v.optional(v.array(v.float64())),
   })
     .index("by_category", ["category"])
-    .index("by_price", ["price"]),
+    .index("by_price", ["price"])
+    .vectorIndex("by_description_embedding", {
+      vectorField: "embedding",
+      dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+    }),
 
   rateLimits: defineTable({
     fingerprint: v.string(),

@@ -224,10 +224,7 @@ export class DatabaseChatClient {
     }
 
     try {
-      // Call the function handle
-      // Note: The handler is a function handle string, we need to call it
-      // using ctx.runQuery or ctx.runMutation with the handle
-      const result = await ctx.runQuery(tool.handler as any, args);
+      const result = await executeToolHandler(ctx, tool, args);
       return { success: true, result };
     } catch (error) {
       return {
@@ -506,4 +503,21 @@ export function defineDatabaseChat(
   config: DatabaseChatConfig = {}
 ): DatabaseChatClient {
   return new DatabaseChatClient(component, config);
+}
+
+async function executeToolHandler(
+  ctx: ActionCtx,
+  tool: DatabaseChatTool,
+  args: Record<string, unknown>
+) {
+  const handlerType = tool.handlerType ?? "query";
+  switch (handlerType) {
+    case "mutation":
+      return await ctx.runMutation(tool.handler as any, args);
+    case "action":
+      return await ctx.runAction(tool.handler as any, args);
+    case "query":
+    default:
+      return await ctx.runQuery(tool.handler as any, args);
+  }
 }

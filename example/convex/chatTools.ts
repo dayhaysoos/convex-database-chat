@@ -1,5 +1,25 @@
-import { query } from "./_generated/server";
+import { action, query } from "./_generated/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import {
+  formatVectorResults,
+  generateEmbedding,
+} from "@dayhaysoos/convex-database-chat/vector";
+
+type ProductSummary = {
+  _id: Id<"products">;
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  stock: number;
+};
+
+type ProductSearchResult = ProductSummary & {
+  inStock: boolean;
+  viewUrl: string;
+};
 
 /**
  * Search products by various filters.
@@ -69,6 +89,80 @@ export const searchProducts = query({
       inStock: p.stock > 0,
       viewUrl: `/products/${p._id}`,
     }));
+  },
+});
+
+/**
+ * Semantic search using embeddings and vector search.
+ * Use this for fuzzy queries like "travel essentials" or "home office setup".
+ */
+export const semanticSearchProducts = action({
+  args: {
+    query: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      _id: v.id("products"),
+      name: v.string(),
+      description: v.string(),
+      category: v.string(),
+      price: v.number(),
+      stock: v.number(),
+      inStock: v.boolean(),
+      viewUrl: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENROUTER_API_KEY not configured");
+    }
+
+    const embedding = await generateEmbedding({
+      apiKey,
+      text: args.query,
+    });
+
+    const limit = Math.min(args.limit ?? 12, 32);
+    const results = await ctx.vectorSearch(
+      "products",
+      "by_description_embedding",
+      {
+        vector: embedding,
+        limit,
+      },
+    );
+
+    const chatToolsApi = api.chatTools as any;
+    const docs = (await ctx.runQuery(chatToolsApi.fetchProductsByIds, {
+      ids: results.map((result) => result._id),
+    })) as ProductSummary[];
+
+    const docsWithUrls: ProductSearchResult[] = docs.map((doc) => ({
+      ...doc,
+      inStock: doc.stock > 0,
+      viewUrl: `/products/${doc._id}`,
+    }));
+
+    const fields = [
+      "name",
+      "description",
+      "category",
+      "price",
+      "stock",
+      "inStock",
+      "viewUrl",
+    ] as const;
+
+    return formatVectorResults<
+      ProductSearchResult,
+      Id<"products">,
+      typeof fields
+    >(results, docsWithUrls, {
+      snippetLength: 200,
+      fields,
+    });
   },
 });
 
@@ -181,5 +275,40 @@ export const getLowStockProducts = query({
         stock: p.stock,
         viewUrl: `/products/${p._id}`,
       }));
+  },
+});
+
+/**
+ * Fetch products by ID in a stable order for vector search results.
+ */
+export const fetchProductsByIds = query({
+  args: { ids: v.array(v.id("products")) },
+  returns: v.array(
+    v.object({
+      _id: v.id("products"),
+      name: v.string(),
+      description: v.string(),
+      category: v.string(),
+      price: v.number(),
+      stock: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const results = [];
+    for (const id of args.ids) {
+      const product = await ctx.db.get(id);
+      if (!product) {
+        continue;
+      }
+      results.push({
+        _id: product._id,
+        name: product.name,
+        description: product.description,
+        category: product.category,
+        price: product.price,
+        stock: product.stock,
+      });
+    }
+    return results;
   },
 });

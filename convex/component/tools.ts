@@ -58,9 +58,15 @@ export interface DatabaseChatTool {
   /** JSON Schema describing the parameters */
   parameters: ToolParameterSchema;
   /**
+   * Function type for the handler (default: "query").
+   * Use "action" for tools that call ctx.vectorSearch or external APIs.
+   */
+  handlerType?: "query" | "mutation" | "action";
+  /**
    * Function handle string to execute.
    * Create this using `createFunctionHandle(api.myQuery)` in your app code,
-   * then pass the string to the component.
+   * then pass the string to the component. Use `handlerType` for actions or
+   * mutations (default: "query").
    */
   handler: string;
 }
@@ -115,6 +121,9 @@ export const databaseChatToolValidator = v.object({
   name: v.string(),
   description: v.string(),
   parameters: toolParameterSchemaValidator,
+  handlerType: v.optional(
+    v.union(v.literal("query"), v.literal("mutation"), v.literal("action"))
+  ),
   handler: v.string(),
 });
 

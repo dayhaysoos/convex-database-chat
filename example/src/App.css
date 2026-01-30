@@ -352,6 +352,45 @@ body {
   gap: 8px;
 }
 
+.tools-btn {
+  background: transparent;
+  color: #a1a1aa;
+  border: 1px solid #3f3f46;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.tools-btn:hover {
+  background: #27272a;
+  color: #fafafa;
+}
+
+.tools-btn.active {
+  background: #f97316;
+  color: #1f1f23;
+  border-color: #f97316;
+}
+
+.tools-count {
+  background: #3f3f46;
+  color: #fafafa;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.tools-btn.active .tools-count {
+  background: #fb923c;
+  color: #1f1f23;
+}
+
 .rate-limit-badge {
   font-size: 0.75rem;
   background: #27272a;
@@ -420,6 +459,87 @@ body {
   flex-direction: column;
   gap: 12px;
   background: #0f0f0f;
+}
+
+.chat-tools-panel {
+  border-bottom: 1px solid #27272a;
+  background: #141416;
+  padding: 10px 14px;
+}
+
+.chat-tools-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #e4e4e7;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.chat-tools-count {
+  background: #27272a;
+  color: #a1a1aa;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+}
+
+.chat-tools-empty {
+  color: #a1a1aa;
+  font-size: 0.8rem;
+}
+
+.chat-tools-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chat-tools-item {
+  background: #1f1f23;
+  border: 1px solid #2f2f35;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 0.8rem;
+  color: #e4e4e7;
+}
+
+.chat-tools-name {
+  font-weight: 600;
+  color: #f97316;
+}
+
+.chat-tools-status {
+  font-weight: 700;
+  color: #a1a1aa;
+}
+
+.chat-tools-status.ok {
+  color: #4ade80;
+}
+
+.chat-tools-status.pending {
+  color: #facc15;
+}
+
+.chat-tools-args {
+  color: #d4d4d8;
+  background: #0f0f0f;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid #27272a;
+  font-size: 0.72rem;
+  word-break: break-word;
 }
 
 /* Welcome message */

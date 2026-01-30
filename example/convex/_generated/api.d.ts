@@ -69,6 +69,7 @@ export declare const components: {
             tools?: Array<{
               description: string;
               handler: string;
+              handlerType?: "query" | "mutation" | "action";
               name: string;
               parameters: {
                 properties: any;
@@ -78,6 +79,38 @@ export declare const components: {
             }>;
           };
           conversationId: string;
+          message: string;
+        },
+        {
+          content?: string;
+          error?: string;
+          success: boolean;
+          toolCalls?: Array<{ args: any; name: string; result: any }>;
+        }
+      >;
+      sendForExternalId: FunctionReference<
+        "action",
+        "internal",
+        {
+          config: {
+            apiKey: string;
+            maxMessagesForLLM?: number;
+            model?: string;
+            systemPrompt?: string;
+            tools?: Array<{
+              description: string;
+              handler: string;
+              handlerType?: "query" | "mutation" | "action";
+              name: string;
+              parameters: {
+                properties: any;
+                required?: Array<string>;
+                type: "object";
+              };
+            }>;
+          };
+          conversationId: string;
+          externalId: string;
           message: string;
         },
         {
@@ -107,6 +140,19 @@ export declare const components: {
           title?: string;
           updatedAt: number;
         } | null
+      >;
+      getForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string },
+        {
+          _creationTime: number;
+          _id: string;
+          createdAt: number;
+          externalId: string;
+          title?: string;
+          updatedAt: number;
+        }
       >;
       list: FunctionReference<
         "query",
@@ -150,10 +196,40 @@ export declare const components: {
           toolResults?: Array<{ result: string; toolCallId: string }>;
         } | null
       >;
+      getLatestForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string },
+        {
+          _creationTime: number;
+          _id: string;
+          content: string;
+          conversationId: string;
+          createdAt: number;
+          role: "user" | "assistant" | "tool";
+          toolCalls?: Array<{ arguments: string; id: string; name: string }>;
+          toolResults?: Array<{ result: string; toolCallId: string }>;
+        } | null
+      >;
       list: FunctionReference<
         "query",
         "internal",
         { conversationId: string; limit?: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          content: string;
+          conversationId: string;
+          createdAt: number;
+          role: "user" | "assistant" | "tool";
+          toolCalls?: Array<{ arguments: string; id: string; name: string }>;
+          toolResults?: Array<{ result: string; toolCallId: string }>;
+        }>
+      >;
+      listForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string; limit?: number },
         Array<{
           _creationTime: number;
           _id: string;
@@ -177,6 +253,12 @@ export declare const components: {
         "mutation",
         "internal",
         { conversationId: string; reason: string },
+        boolean
+      >;
+      abortForExternalId: FunctionReference<
+        "mutation",
+        "internal",
+        { conversationId: string; externalId: string; reason: string },
         boolean
       >;
       addDelta: FunctionReference<
@@ -222,10 +304,40 @@ export declare const components: {
           streamId: string;
         } | null
       >;
+      getStreamForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string },
+        {
+          abortReason?: string;
+          endedAt?: number;
+          startedAt: number;
+          status: "streaming" | "finished" | "aborted";
+          streamId: string;
+        } | null
+      >;
       listDeltas: FunctionReference<
         "query",
         "internal",
         { cursor: number; streamId: string },
+        Array<{
+          end: number;
+          parts: Array<{
+            args?: string;
+            error?: string;
+            result?: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            type: "text-delta" | "tool-call" | "tool-result" | "error";
+          }>;
+          start: number;
+        }>
+      >;
+      listDeltasForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { cursor: number; externalId: string; streamId: string },
         Array<{
           end: number;
           parts: Array<{

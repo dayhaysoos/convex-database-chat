@@ -7,6 +7,8 @@ interface Message {
   _id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  toolResults?: Array<{ toolCallId: string; result: string }>;
   createdAt: number;
 }
 
@@ -164,6 +166,7 @@ export function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showTools, setShowTools] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // Track if current request was aborted to ignore its completion
@@ -190,6 +193,27 @@ export function Chat() {
     api.chat.getMessages,
     conversationId ? { conversationId } : "skip"
   ) as Message[] | undefined;
+
+  const toolResultIds = new Set(
+    (messages ?? []).flatMap((msg) =>
+      msg.toolResults ? msg.toolResults.map((result) => result.toolCallId) : []
+    )
+  );
+
+  const toolCalls = (messages ?? []).flatMap((msg) =>
+    msg.toolCalls
+      ? msg.toolCalls.map((call) => ({
+          id: call.id,
+          name: call.name,
+          args: call.arguments,
+          createdAt: msg.createdAt,
+        }))
+      : []
+  );
+
+  const displayMessages = (messages ?? []).filter(
+    (msg) => msg.role !== "tool" && !msg.toolCalls
+  );
 
   // Use delta-based streaming for efficient O(n) bandwidth
   const { content: streamingContent, isStreaming } =
@@ -323,6 +347,16 @@ export function Chat() {
               )}
             </div>
             <div className="chat-header-right">
+              <button
+                onClick={() => setShowTools((prev) => !prev)}
+                className={`tools-btn ${showTools ? "active" : ""}`}
+                title="Toggle tool activity"
+              >
+                Tools
+                {toolCalls.length > 0 && (
+                  <span className="tools-count">{toolCalls.length}</span>
+                )}
+              </button>
               <button onClick={handleNewChat} className="new-chat-btn">
                 New
               </button>
@@ -336,8 +370,46 @@ export function Chat() {
             </div>
           </div>
 
+          {showTools && (
+            <div className="chat-tools-panel">
+              <div className="chat-tools-header">
+                <span>Tool activity</span>
+                <span className="chat-tools-count">{toolCalls.length}</span>
+              </div>
+              {toolCalls.length === 0 ? (
+                <div className="chat-tools-empty">
+                  No tool calls yet. Ask a conceptual question to trigger
+                  semantic search.
+                </div>
+              ) : (
+                <ul className="chat-tools-list">
+                  {[...toolCalls]
+                    .slice(-6)
+                    .reverse()
+                    .map((call) => (
+                      <li key={call.id} className="chat-tools-item">
+                        <span className="chat-tools-name">{call.name}</span>
+                        <span
+                          className={`chat-tools-status ${
+                            toolResultIds.has(call.id) ? "ok" : "pending"
+                          }`}
+                        >
+                          {toolResultIds.has(call.id) ? "✓" : "…"}
+                        </span>
+                        <code className="chat-tools-args">
+                          {call.args.length > 140
+                            ? `${call.args.slice(0, 140)}...`
+                            : call.args}
+                        </code>
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           <div className="chat-messages">
-            {!messages || messages.length === 0 ? (
+            {displayMessages.length === 0 ? (
               <div className="chat-welcome">
                 <h3>Welcome! 👋</h3>
                 <p>Ask me about the products in the database:</p>
@@ -354,7 +426,7 @@ export function Chat() {
                 )}
               </div>
             ) : (
-              messages.map((msg) => (
+              displayMessages.map((msg) => (
                 <div key={msg._id} className={`chat-message ${msg.role}`}>
                   <div className="message-role">
                     {msg.role === "user" ? "You" : "Assistant"}
