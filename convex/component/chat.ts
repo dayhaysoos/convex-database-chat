@@ -207,7 +207,7 @@ async function sendInternal(
 
         // Execute the tool
         try {
-          const result = await ctx.runQuery(tool.handler as any, parsedArgs);
+          const result = await executeToolHandler(ctx, tool, parsedArgs);
           toolResults.push({
             toolCallId: toolCall.id,
             result: JSON.stringify(result),
@@ -291,6 +291,23 @@ async function sendInternal(
       success: false,
       error: errorMessage,
     };
+  }
+}
+
+async function executeToolHandler(
+  ctx: any,
+  tool: DatabaseChatTool,
+  args: Record<string, unknown>
+) {
+  const handlerType = tool.handlerType ?? "query";
+  switch (handlerType) {
+    case "mutation":
+      return await ctx.runMutation(tool.handler as any, args);
+    case "action":
+      return await ctx.runAction(tool.handler as any, args);
+    case "query":
+    default:
+      return await ctx.runQuery(tool.handler as any, args);
   }
 }
 

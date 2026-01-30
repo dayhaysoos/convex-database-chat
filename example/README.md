@@ -8,6 +8,7 @@ A simple demo showing how to use the `@dayhaysoo/convex-database-chat` component
 - 💬 Natural language queries powered by Claude via OpenRouter
 - ⚡ Real-time streaming responses
 - 🔍 Search by name, category, price range
+- 🧠 Semantic search with vector embeddings
 - 📊 Get inventory statistics and low-stock alerts
 
 ## Setup
@@ -42,13 +43,64 @@ npm run seed
 
 This populates the database with 50 mock products.
 
-### 5. Run the app
+### 5. Generate embeddings for semantic search (optional)
+
+```bash
+npm run seed:embeddings
+```
+
+This generates vector embeddings for each product so semantic search can return
+meaning-based results.
+
+### 6. Run the app
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+This runs both the Convex dev server and the Vite UI in one command.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+Tip: use the **Tools** button in the chat header to see which tools are being
+called (including semantic search).
+
+If you only want one side:
+
+```bash
+# Convex only
+npm run convex
+
+# UI only
+npm run dev:ui
+```
+
+## Local package development
+
+If you want the example to use the local package (without publishing), you can
+use the helper script:
+
+```bash
+# From repo root
+./dev-link.sh link
+```
+
+Or use `npm link` directly:
+
+```bash
+# From repo root
+npm run build:watch
+npm link
+
+# From example/
+npm link @dayhaysoos/convex-database-chat
+```
+
+To go back to the published package:
+
+```bash
+npm unlink @dayhaysoos/convex-database-chat
+npm install
+```
 
 ## Example Queries
 
@@ -58,6 +110,8 @@ Try asking:
 - "What products are low on stock?"
 - "Give me an inventory overview"
 - "Find running shoes"
+- "Find items for a home office setup"
+- "What are good travel essentials?"
 - "How many products do we have in each category?"
 - "What's the most expensive item in sports?"
 
@@ -82,7 +136,7 @@ example/
 ## How It Works
 
 1. **User asks a question** → Sent to Convex action
-2. **Action calls OpenRouter** → LLM with tool definitions
+2. **Action calls DatabaseChat component** → LLM with tool definitions
 3. **LLM decides to call tools** → e.g., `searchProducts({ category: "electronics" })`
 4. **Tool executes Convex query** → Returns product data
 5. **LLM formats response** → With markdown links to products

@@ -1,4 +1,8 @@
-import { mutation } from "./_generated/server";
+import { action, mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { generateEmbedding } from "@dayhaysoos/convex-database-chat/vector";
 
 const PRODUCTS = [
   // Electronics (13 products)
@@ -387,5 +391,91 @@ export const clearProducts = mutation({
       await ctx.db.delete(product._id);
     }
     return { message: "Products cleared", count: products.length };
+  },
+});
+
+type ProductForEmbedding = {
+  _id: Id<"products">;
+  name: string;
+  description: string;
+  category: string;
+  embedding?: number[];
+};
+
+export const listProductsForEmbedding = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id("products"),
+      name: v.string(),
+      description: v.string(),
+      category: v.string(),
+      embedding: v.optional(v.array(v.float64())),
+    }),
+  ),
+  handler: async (ctx) => {
+    const products = await ctx.db.query("products").collect();
+    return products.map((product) => ({
+      _id: product._id,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      embedding: product.embedding,
+    }));
+  },
+});
+
+export const updateProductEmbedding = mutation({
+  args: {
+    id: v.id("products"),
+    embedding: v.array(v.float64()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { embedding: args.embedding });
+  },
+});
+
+export const generateProductEmbeddings = action({
+  args: {
+    limit: v.optional(v.number()),
+    overwrite: v.optional(v.boolean()),
+  },
+  returns: v.object({ updated: v.number(), skipped: v.number() }),
+  handler: async (ctx, args) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENROUTER_API_KEY not configured");
+    }
+
+    const seedApi = api.seed as any;
+    const products = (await ctx.runQuery(
+      seedApi.listProductsForEmbedding,
+    )) as ProductForEmbedding[];
+
+    const requestedLimit = args.limit ?? products.length;
+    const limit = Math.max(0, Math.min(requestedLimit, products.length));
+    let updated = 0;
+    let skipped = 0;
+
+    for (const product of products.slice(0, limit)) {
+      if (!args.overwrite && product.embedding && product.embedding.length > 0) {
+        skipped += 1;
+        continue;
+      }
+
+      const embedding = await generateEmbedding({
+        apiKey,
+        text: `${product.name}. ${product.description} (${product.category})`,
+      });
+
+      await ctx.runMutation(seedApi.updateProductEmbedding, {
+        id: product._id,
+        embedding,
+      });
+
+      updated += 1;
+    }
+
+    return { updated, skipped };
   },
 });

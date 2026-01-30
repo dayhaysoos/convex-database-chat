@@ -18,7 +18,16 @@ export const getAllProducts = query({
     }),
   ),
   handler: async (ctx) => {
-    return await ctx.db.query("products").collect();
+    const products = await ctx.db.query("products").collect();
+    return products.map((product) => ({
+      _id: product._id,
+      _creationTime: product._creationTime,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      price: product.price,
+      stock: product.stock,
+    }));
   },
 });
 
@@ -40,7 +49,19 @@ export const getProduct = query({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    const product = await ctx.db.get(args.id);
+    if (!product) {
+      return null;
+    }
+    return {
+      _id: product._id,
+      _creationTime: product._creationTime,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      price: product.price,
+      stock: product.stock,
+    };
   },
 });
 

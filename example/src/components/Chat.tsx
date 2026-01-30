@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, FormEvent } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
+import { useSmoothText } from "@dayhaysoos/convex-database-chat";
 import { api } from "../../convex/_generated/api";
 import { useRateLimit } from "../hooks/useRateLimit";
 
@@ -7,6 +8,8 @@ interface Message {
   _id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  toolResults?: Array<{ toolCallId: string; result: string }>;
   createdAt: number;
 }
 
@@ -164,6 +167,7 @@ export function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showTools, setShowTools] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // Track if current request was aborted to ignore its completion
@@ -191,9 +195,38 @@ export function Chat() {
     conversationId ? { conversationId } : "skip"
   ) as Message[] | undefined;
 
+  const toolResultIds = new Set(
+    (messages ?? []).flatMap((msg) =>
+      msg.toolResults ? msg.toolResults.map((result) => result.toolCallId) : []
+    )
+  );
+
+  const toolCalls = (messages ?? []).flatMap((msg) =>
+    msg.toolCalls
+      ? msg.toolCalls.map((call) => ({
+          id: call.id,
+          name: call.name,
+          args: call.arguments,
+          createdAt: msg.createdAt,
+        }))
+      : []
+  );
+
+  const displayMessages = (messages ?? []).filter(
+    (msg) => msg.role !== "tool" && !msg.toolCalls
+  );
+
   // Use delta-based streaming for efficient O(n) bandwidth
   const { content: streamingContent, isStreaming } =
     useDeltaStreaming(conversationId);
+
+  const [smoothedStreamingContent] = useSmoothText(streamingContent, {
+    startStreaming: isStreaming,
+    initialCharsPerSecond: 140,
+    minDelayMs: 16,
+    maxDelayMs: 60,
+  });
+
 
   // Create conversation on mount
   useEffect(() => {
@@ -323,6 +356,16 @@ export function Chat() {
               )}
             </div>
             <div className="chat-header-right">
+              <button
+                onClick={() => setShowTools((prev) => !prev)}
+                className={`tools-btn ${showTools ? "active" : ""}`}
+                title="Toggle tool activity"
+              >
+                Tools
+                {toolCalls.length > 0 && (
+                  <span className="tools-count">{toolCalls.length}</span>
+                )}
+              </button>
               <button onClick={handleNewChat} className="new-chat-btn">
                 New
               </button>
@@ -336,8 +379,46 @@ export function Chat() {
             </div>
           </div>
 
+          {showTools && (
+            <div className="chat-tools-panel">
+              <div className="chat-tools-header">
+                <span>Tool activity</span>
+                <span className="chat-tools-count">{toolCalls.length}</span>
+              </div>
+              {toolCalls.length === 0 ? (
+                <div className="chat-tools-empty">
+                  No tool calls yet. Ask a conceptual question to trigger
+                  semantic search.
+                </div>
+              ) : (
+                <ul className="chat-tools-list">
+                  {[...toolCalls]
+                    .slice(-6)
+                    .reverse()
+                    .map((call) => (
+                      <li key={call.id} className="chat-tools-item">
+                        <span className="chat-tools-name">{call.name}</span>
+                        <span
+                          className={`chat-tools-status ${
+                            toolResultIds.has(call.id) ? "ok" : "pending"
+                          }`}
+                        >
+                          {toolResultIds.has(call.id) ? "✓" : "…"}
+                        </span>
+                        <code className="chat-tools-args">
+                          {call.args.length > 140
+                            ? `${call.args.slice(0, 140)}...`
+                            : call.args}
+                        </code>
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           <div className="chat-messages">
-            {!messages || messages.length === 0 ? (
+            {displayMessages.length === 0 ? (
               <div className="chat-welcome">
                 <h3>Welcome! 👋</h3>
                 <p>Ask me about the products in the database:</p>
@@ -354,7 +435,7 @@ export function Chat() {
                 )}
               </div>
             ) : (
-              messages.map((msg) => (
+              displayMessages.map((msg) => (
                 <div key={msg._id} className={`chat-message ${msg.role}`}>
                   <div className="message-role">
                     {msg.role === "user" ? "You" : "Assistant"}
@@ -369,9 +450,12 @@ export function Chat() {
             {/* Streaming content */}
             {streamingContent && (
               <div className="chat-message assistant streaming">
-                <div className="message-role">Assistant</div>
+                <div className="message-role">
+                  Assistant
+                  <span className="message-status responding">Responding</span>
+                </div>
                 <div className="message-content">
-                  <MarkdownContent content={streamingContent} />
+                  <MarkdownContent content={smoothedStreamingContent} />
                   <span className="typing-indicator">▌</span>
                 </div>
               </div>
@@ -380,7 +464,10 @@ export function Chat() {
             {/* Loading/stopping indicator when no streaming content yet */}
             {(isLoading || isStopping) && !streamingContent && (
               <div className="chat-message assistant">
-                <div className="message-role">Assistant</div>
+                <div className="message-role">
+                  Assistant
+                  <span className="message-status thinking">Thinking</span>
+                </div>
                 <div className="message-content">
                   <span className="thinking">
                     {isStopping ? "Stopping..." : "Thinking..."}
