@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, FormEvent } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
+import { useSmoothText } from "@dayhaysoos/convex-database-chat";
 import { api } from "../../convex/_generated/api";
 import { useRateLimit } from "../hooks/useRateLimit";
 
@@ -218,6 +219,14 @@ export function Chat() {
   // Use delta-based streaming for efficient O(n) bandwidth
   const { content: streamingContent, isStreaming } =
     useDeltaStreaming(conversationId);
+
+  const [smoothedStreamingContent] = useSmoothText(streamingContent, {
+    startStreaming: isStreaming,
+    initialCharsPerSecond: 140,
+    minDelayMs: 16,
+    maxDelayMs: 60,
+  });
+
 
   // Create conversation on mount
   useEffect(() => {
@@ -441,9 +450,12 @@ export function Chat() {
             {/* Streaming content */}
             {streamingContent && (
               <div className="chat-message assistant streaming">
-                <div className="message-role">Assistant</div>
+                <div className="message-role">
+                  Assistant
+                  <span className="message-status responding">Responding</span>
+                </div>
                 <div className="message-content">
-                  <MarkdownContent content={streamingContent} />
+                  <MarkdownContent content={smoothedStreamingContent} />
                   <span className="typing-indicator">▌</span>
                 </div>
               </div>
@@ -452,7 +464,10 @@ export function Chat() {
             {/* Loading/stopping indicator when no streaming content yet */}
             {(isLoading || isStopping) && !streamingContent && (
               <div className="chat-message assistant">
-                <div className="message-role">Assistant</div>
+                <div className="message-role">
+                  Assistant
+                  <span className="message-status thinking">Thinking</span>
+                </div>
                 <div className="message-content">
                   <span className="thinking">
                     {isStopping ? "Stopping..." : "Thinking..."}
