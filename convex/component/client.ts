@@ -133,6 +133,8 @@ export interface SendMessageOptions {
   model?: string;
   /** Override system prompt for this message */
   systemPrompt?: string;
+  /** Server-side context merged into tool args (not exposed to LLM) */
+  toolContext?: Record<string, unknown>;
 }
 
 export interface SendMessageResult {
@@ -349,6 +351,7 @@ export class DatabaseChatClient {
         systemPrompt: options.systemPrompt ?? this.config.systemPrompt,
         tools: this.tools.length > 0 ? this.tools : undefined,
         maxMessagesForLLM: this.config.maxMessagesForLLM ?? 50,
+        toolContext: options.toolContext,
       },
     });
   }

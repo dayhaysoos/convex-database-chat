@@ -1100,6 +1100,36 @@ enforce access control in your app.
 
 ---
 
+## Injecting trusted context into tools
+
+Some tool handlers need server-only context (orgId, externalId, userId) that
+should never appear in the tool schema or LLM prompt. Pass that data via
+`toolContext` in `chat.send` or `chat.sendForExternalId`. The context is merged
+into tool args after validation, and `toolContext` wins on conflicts.
+
+```typescript
+await ctx.runAction(components.databaseChat.chat.sendForExternalId, {
+  conversationId,
+  externalId,
+  message,
+  config: {
+    apiKey: process.env.OPENROUTER_API_KEY!,
+    systemPrompt: SYSTEM_PROMPT,
+    tools,
+    toolContext: {
+      orgId,
+      userId,
+      externalId,
+    },
+  },
+});
+```
+
+Note: Do not include fields like `orgId` in the tool schema so the LLM never
+sees them.
+
+---
+
 ## API Reference
 
 ### Component Functions
