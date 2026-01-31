@@ -10,6 +10,7 @@ import {
 } from "./tools";
 import type { DatabaseChatTool } from "./tools";
 import { DeltaStreamer } from "./deltaStreamer";
+import { executeToolWithContext } from "./toolExecution";
 
 const sendConfigValidator = v.object({
   apiKey: v.string(),
@@ -19,6 +20,7 @@ const sendConfigValidator = v.object({
   tools: v.optional(v.array(databaseChatToolValidator)),
   // Max messages to include in LLM context (default: 50)
   maxMessagesForLLM: v.optional(v.number()),
+  toolContext: v.optional(v.any()),
 });
 
 const sendReturnValidator = v.object({
@@ -98,6 +100,7 @@ async function sendInternal(
         handler: string;
       }>;
       maxMessagesForLLM?: number;
+      toolContext?: Record<string, unknown>;
     };
   }
 ) {
@@ -207,14 +210,19 @@ async function sendInternal(
 
         // Execute the tool
         try {
-          const result = await executeToolHandler(ctx, tool, parsedArgs);
+          const { result, args: mergedArgs } = await executeToolWithContext(
+            ctx,
+            tool,
+            parsedArgs,
+            config.toolContext
+          );
           toolResults.push({
             toolCallId: toolCall.id,
             result: JSON.stringify(result),
           });
           executedToolCalls.push({
             name: toolCall.name,
-            args: parsedArgs,
+            args: mergedArgs,
             result,
           });
         } catch (error) {
@@ -291,23 +299,6 @@ async function sendInternal(
       success: false,
       error: errorMessage,
     };
-  }
-}
-
-async function executeToolHandler(
-  ctx: any,
-  tool: DatabaseChatTool,
-  args: Record<string, unknown>
-) {
-  const handlerType = tool.handlerType ?? "query";
-  switch (handlerType) {
-    case "mutation":
-      return await ctx.runMutation(tool.handler as any, args);
-    case "action":
-      return await ctx.runAction(tool.handler as any, args);
-    case "query":
-    default:
-      return await ctx.runQuery(tool.handler as any, args);
   }
 }
 

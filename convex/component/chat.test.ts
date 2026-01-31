@@ -3,6 +3,8 @@ import { describe, it, expect } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
 import { api } from "./_generated/api";
+import { executeToolWithContext } from "./toolExecution";
+import type { DatabaseChatTool } from "./tools";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -131,6 +133,47 @@ describe("databaseChat chat", () => {
         "user",
         "assistant",
       ]);
+    });
+  });
+
+  describe("tool context injection", () => {
+    it("merges toolContext into tool args before execution", async () => {
+      const ctx = {
+        runQuery: async (_handler: string, args: Record<string, unknown>) => args,
+        runMutation: async (
+          _handler: string,
+          args: Record<string, unknown>
+        ) => args,
+        runAction: async (_handler: string, args: Record<string, unknown>) =>
+          args,
+      };
+
+      const tool: DatabaseChatTool = {
+        name: "searchRecords",
+        description: "Search records",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+          },
+          required: ["query"],
+        },
+        handler: "testHandler",
+      };
+
+      const { result, args } = await executeToolWithContext(
+        ctx,
+        tool,
+        { query: "react", orgId: "llm-org" },
+        { orgId: "org123", externalId: "user:1" }
+      );
+
+      expect(result).toEqual({
+        query: "react",
+        orgId: "org123",
+        externalId: "user:1",
+      });
+      expect(args).toEqual(result);
     });
   });
 
