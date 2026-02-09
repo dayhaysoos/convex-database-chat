@@ -1,9 +1,9 @@
 [build]
 builder = "railpack"
-buildCommand = "cd example && npm install && npm run build"
+buildCommand = "npm install && npm run build"
 
 [deploy]
-startCommand = "cd example && npm run start"
+startCommand = "npm run start"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"

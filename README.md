@@ -16,6 +16,7 @@ DatabaseChat lets users ask questions about your data in plain English. The LLM 
 - [Building the UI](#building-the-ui)
 - [Patterns](#patterns)
 - [API Reference](#api-reference)
+- [Railway Deployments](#railway-deployments)
 - [Testing](#testing)
 
 ---
@@ -1175,6 +1176,19 @@ sees them.
 | `streaming` | Stream is active, deltas being written |
 | `finished` | Stream completed successfully |
 | `aborted` | Stream was cancelled (user abort, error, or timeout) |
+
+---
+
+## Railway Deployments
+
+This repo hosts two Railway services, each with its own config file:
+
+- Example app: Root Directory `/example`, Railway Config File `/example/railway.toml`
+- Docs site: Root Directory `/docs`, Railway Config File `/docs/railway.toml`
+
+Note: Railway does not automatically follow the Root Directory when selecting a
+config file, so you must set the absolute config path per service. A root
+`railway.toml` is intentionally not used.
 
 ---
 
