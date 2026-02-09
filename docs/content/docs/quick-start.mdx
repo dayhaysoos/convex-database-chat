@@ -1,0 +1,173 @@
+---
+title: Quick Start
+description: Minimal end-to-end setup using the client wrapper.
+---
+
+## 1. Define a tool
+
+Create a Convex query that the LLM can call.
+
+```ts
+// convex/chatTools.ts
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const countRecords = query({
+  args: { table: v.string() },
+  returns: v.object({ count: v.number() }),
+  handler: async (ctx, args) => {
+    if (args.table === "users") {
+      const users = await ctx.db.query("users").collect();
+      return { count: users.length };
+    }
+    if (args.table === "orders") {
+      const orders = await ctx.db.query("orders").collect();
+      return { count: orders.length };
+    }
+    return { count: 0 };
+  },
+});
+```
+
+## 2. Wire the chat endpoints
+
+Use `defineDatabaseChat` to create a typed wrapper around the component.
+
+```ts
+// convex/chat.ts
+import { v } from "convex/values";
+import { action, mutation, query } from "./_generated/server";
+import { createFunctionHandle } from "convex/server";
+import { components, api } from "./_generated/api";
+import { defineDatabaseChat } from "./components/databaseChat/client";
+import type { DatabaseChatTool } from "./components/databaseChat/tools";
+
+const tools: DatabaseChatTool[] = [
+  {
+    name: "countRecords",
+    description: "Count records in a table. Available tables: users, orders",
+    parameters: {
+      type: "object",
+      properties: {
+        table: { type: "string", enum: ["users", "orders"] },
+      },
+      required: ["table"],
+    },
+    handler: createFunctionHandle(api.chatTools.countRecords),
+  },
+];
+
+const chat = defineDatabaseChat(components.databaseChat, {
+  tools,
+  systemPrompt:
+    "You are a helpful assistant. Use the available tools to answer questions about the database.",
+});
+
+export const createConversation = mutation({
+  args: { externalId: v.string(), title: v.optional(v.string()) },
+  handler: async (ctx, args) => chat.createConversation(ctx, args),
+});
+
+export const listConversations = query({
+  args: { externalId: v.string() },
+  handler: async (ctx, args) => chat.listConversations(ctx, args.externalId),
+});
+
+export const getMessages = query({
+  args: { conversationId: v.string() },
+  handler: async (ctx, args) => chat.getMessages(ctx, args.conversationId),
+});
+
+export const getStreamState = query({
+  args: { conversationId: v.string() },
+  handler: async (ctx, args) => chat.getStreamState(ctx, args.conversationId),
+});
+
+export const getStreamDeltas = query({
+  args: { streamId: v.string(), cursor: v.number() },
+  handler: async (ctx, args) => chat.getStreamDeltas(ctx, args.streamId, args.cursor),
+});
+
+export const abortStream = mutation({
+  args: { conversationId: v.string(), reason: v.optional(v.string()) },
+  handler: async (ctx, args) =>
+    chat.abortStream(ctx, args.conversationId, args.reason ?? "User cancelled"),
+});
+
+export const sendMessage = action({
+  args: { conversationId: v.string(), message: v.string() },
+  handler: async (ctx, args) =>
+    chat.send(ctx, {
+      conversationId: args.conversationId,
+      message: args.message,
+      apiKey: process.env.OPENROUTER_API_KEY!,
+    }),
+});
+```
+
+## 3. Add a minimal UI
+
+```tsx
+import { useEffect, useState } from "react";
+import { useMutation } from "convex/react";
+import { api } from "../convex/_generated/api";
+import {
+  DatabaseChatProvider,
+  useDatabaseChat,
+} from "@dayhaysoos/convex-database-chat";
+
+function ChatWidget() {
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const createConversation = useMutation(api.chat.createConversation);
+
+  useEffect(() => {
+    createConversation({ externalId: "user:demo" }).then(setConversationId);
+  }, [createConversation]);
+
+  const {
+    messages,
+    streamingContent,
+    isStreaming,
+    isLoading,
+    send,
+    abort,
+  } = useDatabaseChat({ conversationId });
+
+  return (
+    <div>
+      {messages?.map((msg) => (
+        <div key={msg._id}>{msg.content}</div>
+      ))}
+      {streamingContent && <div>{streamingContent}</div>}
+      <button
+        onClick={() => conversationId && send("How many users do we have?")}
+        disabled={!conversationId || isLoading || isStreaming}
+      >
+        Ask
+      </button>
+      {isStreaming && <button onClick={abort}>Stop</button>}
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <DatabaseChatProvider
+      api={{
+        getMessages: api.chat.getMessages,
+        listConversations: api.chat.listConversations,
+        getStreamState: api.chat.getStreamState,
+        getStreamDeltas: api.chat.getStreamDeltas,
+        createConversation: api.chat.createConversation,
+        abortStream: api.chat.abortStream,
+        sendMessage: api.chat.sendMessage,
+      }}
+    >
+      <ChatWidget />
+    </DatabaseChatProvider>
+  );
+}
+```
+
+Replace `externalId` with your own auth identifier. For richer UI examples, see
+the [React Hooks](/docs/guides/react-hooks) guide.

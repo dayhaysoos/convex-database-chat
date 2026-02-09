@@ -1,0 +1,13 @@
+{
+  "title": "Guides",
+  "pages": [
+    "tools",
+    "chat-integration",
+    "streaming",
+    "system-prompts",
+    "react-hooks",
+    "vector-search",
+    "security",
+    "example-app"
+  ]
+}

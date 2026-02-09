@@ -1,0 +1,55 @@
+---
+title: Streaming
+description: How delta-based streaming works.
+---
+
+DatabaseChat streams responses as deltas instead of full text snapshots. This
+keeps bandwidth O(n) instead of O(n^2).
+
+## Why deltas
+
+Traditional streaming sends the full accumulated response on each update:
+
+- Update 1: "H" (1 byte)
+- Update 2: "He" (2 bytes)
+- Update 3: "Hel" (3 bytes)
+
+For a 1000 character response, this can send roughly 500,000 bytes.
+
+Delta-based streaming sends only new text:
+
+- Delta 1: "H" (1 byte)
+- Delta 2: "e" (1 byte)
+- Delta 3: "l" (1 byte)
+
+For a 1000 character response, you send about 1000 bytes total.
+
+## Stream lifecycle
+
+`stream.getStream` returns a `StreamState` with one of:
+
+- `streaming`
+- `finished`
+- `aborted`
+
+The component:
+
+- Creates a stream when generation starts.
+- Writes deltas to `streamDeltas` as parts arrive.
+- Deletes deltas on finish or abort.
+- Cleans up finished streams after a short delay.
+
+## Client accumulation
+
+Use the provided hooks for accumulation:
+
+- `useStreamingContent` for a single streaming block.
+- `useMessagesWithStreaming` to merge streaming content into the message list.
+
+If you need a custom integration, query `stream.listDeltas` with a cursor and
+concatenate any `text-delta` parts in order.
+
+## Custom LLMs
+
+For custom SDKs, use `DeltaStreamer` from the component to write deltas while
+you stream from your own provider.

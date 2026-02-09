@@ -1,0 +1,110 @@
+---
+title: Tools
+description: Define what the LLM can query.
+---
+
+Tools describe the queries and actions your assistant can call. Each tool
+declares a name, description, JSON schema for parameters, and a handler
+string created with `createFunctionHandle`.
+
+## Tool shape
+
+```ts
+interface DatabaseChatTool {
+  name: string;
+  description: string;
+  parameters: {
+    type: "object";
+    properties: Record<
+      string,
+      {
+        type: "string" | "number" | "boolean" | "array" | "object";
+        description?: string;
+        enum?: string[];
+        items?: { type: string };
+      }
+    >;
+    required?: string[];
+  };
+  handlerType?: "query" | "mutation" | "action";
+  handler: string;
+}
+```
+
+`handlerType` defaults to `"query"`. Use `"action"` for tools that call
+`ctx.vectorSearch` or external APIs.
+
+## Explicit tool example
+
+```ts
+import { createFunctionHandle } from "convex/server";
+import { api } from "./_generated/api";
+import type { DatabaseChatTool } from "./components/databaseChat/tools";
+
+const tools: DatabaseChatTool[] = [
+  {
+    name: "searchProducts",
+    description: "Search products by name, category, or price range",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search text" },
+        category: {
+          type: "string",
+          enum: ["electronics", "clothing", "home", "sports"],
+        },
+        minPrice: { type: "number" },
+        maxPrice: { type: "number" },
+        limit: { type: "number" },
+      },
+    },
+    handler: createFunctionHandle(api.chatTools.searchProducts),
+  },
+];
+```
+
+## Built-in helpers
+
+If you want generic tools, the component includes helpers:
+
+- `createQueryTableTool(allowedTables, handler)`
+- `createCountTool(allowedTables, handler)`
+- `createAggregateTool(allowedTables, handler)`
+- `createSearchTool(allowedTables, handler)`
+
+Each helper returns a `DatabaseChatTool` and still requires a handler string.
+
+## Auto-generated tools
+
+You can generate tools from schema-like definitions with `generateToolsFromSchema`.
+
+```ts
+import { createFunctionHandle } from "convex/server";
+import { defineTable, generateToolsFromSchema } from "./components/databaseChat/schemaTools";
+import { api } from "./_generated/api";
+
+const tables = [
+  defineTable("products", [
+    { name: "name", type: "string" },
+    { name: "category", type: "string" },
+    { name: "price", type: "number" },
+  ]),
+];
+
+const tools = generateToolsFromSchema({
+  tables,
+  allowedTables: ["products"],
+  handlers: {
+    query: createFunctionHandle(api.chatTools.queryTable),
+    count: createFunctionHandle(api.chatTools.countRecords),
+    aggregate: createFunctionHandle(api.chatTools.aggregate),
+  },
+});
+```
+
+`AutoToolsConfig` lets you restrict tables and hide fields:
+
+- `allowedTables`: tables to expose
+- `excludeFields`: per-table fields to omit
+- `tableDescriptions`: descriptions for table names
+- `fieldDescriptions`: descriptions for individual fields

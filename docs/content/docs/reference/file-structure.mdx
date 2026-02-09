@@ -1,0 +1,28 @@
+---
+title: File Structure
+description: Key folders in the component package.
+---
+
+```
+convex/component/                 # Convex component source
+├── convex.config.ts              # Component definition
+├── schema.ts                     # Tables for conversations, streams, deltas
+├── conversations.ts              # Conversation CRUD
+├── messages.ts                   # Message CRUD
+├── stream.ts                     # Delta streaming and lifecycle
+├── deltaStreamer.ts              # DeltaStreamer helper class
+├── chat.ts                       # Chat action with OpenRouter
+├── tools.ts                      # Tool types and helpers
+├── schemaTools.ts                # Auto-tool generation helpers
+├── client.ts                     # Client wrapper (defineDatabaseChat)
+├── toolExecution.ts              # Tool execution and context merge
+├── access.ts                     # External ID scoping helpers
+└── *.test.ts                     # Tests
+
+src/                              # Frontend exports
+├── react.tsx                     # React hooks and provider
+├── vector.ts                     # Vector search helpers
+└── index.ts                      # Package exports
+
+example/                          # Demo app
+```

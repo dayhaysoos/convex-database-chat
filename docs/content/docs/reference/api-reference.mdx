@@ -1,0 +1,77 @@
+---
+title: API Reference
+description: Component endpoints and React exports.
+---
+
+## Component functions
+
+| Function | Type | Description |
+| --- | --- | --- |
+| `conversations.create` | Mutation | Create a new conversation |
+| `conversations.get` | Query | Get conversation by ID |
+| `conversations.getForExternalId` | Query | Get conversation by ID scoped to `externalId` |
+| `conversations.list` | Query | List conversations by `externalId` |
+| `messages.add` | Mutation | Add a message |
+| `messages.list` | Query | List messages in a conversation (bounded limit) |
+| `messages.listForExternalId` | Query | List messages scoped to `externalId` |
+| `messages.getLatest` | Query | Get latest message |
+| `messages.getLatestForExternalId` | Query | Get latest message scoped to `externalId` |
+| `stream.create` | Mutation | Create a new stream for delta-based streaming |
+| `stream.addDelta` | Mutation | Add a delta to a stream (returns `boolean`) |
+| `stream.finish` | Mutation | Finish a stream and clean up deltas |
+| `stream.abort` | Mutation | Abort a stream by stream ID |
+| `stream.abortByConversation` | Mutation | Abort a stream by conversation ID |
+| `stream.abortForExternalId` | Mutation | Abort a stream by conversation ID scoped to `externalId` |
+| `stream.getStream` | Query | Get current stream state for a conversation |
+| `stream.getStreamForExternalId` | Query | Get current stream state scoped to `externalId` |
+| `stream.listDeltas` | Query | Get deltas from a cursor position |
+| `stream.listDeltasForExternalId` | Query | Get deltas scoped to `externalId` |
+| `chat.send` | Action | Send a message via OpenRouter |
+| `chat.sendForExternalId` | Action | Send a message scoped to `externalId` |
+
+## Stream types
+
+`StreamState.status` values:
+
+- `streaming`
+- `finished`
+- `aborted`
+
+`StreamPart.type` values:
+
+- `text-delta`
+- `tool-call`
+- `tool-result`
+- `error`
+
+<Callout title="Message limits">
+  `messages.list` and `messages.listForExternalId` clamp `limit` to 1..1000 and
+  default to 100 when omitted.
+</Callout>
+
+## React exports
+
+Exported from `@dayhaysoos/convex-database-chat`:
+
+- `DatabaseChatProvider`
+- `useDatabaseChat`
+- `useConversations`
+- `useStreamingContent`
+- `useMessagesWithStreaming`
+- `useSmoothText`
+- `SmoothText`
+
+Types:
+
+- `DatabaseChatApi`
+- `DatabaseChatProviderProps`
+- `Message`
+- `StreamState`
+- `StreamDelta`
+- `StreamPart`
+- `UseDatabaseChatOptions`
+- `UseDatabaseChatReturn`
+- `UseConversationsOptions`
+- `UseConversationsReturn`
+- `UseSmoothTextOptions`
+- `SmoothTextProps`

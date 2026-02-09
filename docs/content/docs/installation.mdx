@@ -1,0 +1,64 @@
+---
+title: Installation
+description: Install the component and configure Convex.
+---
+
+## Install the package
+
+<CodeBlockTabs defaultValue="pnpm">
+  <CodeBlockTabsList>
+    <CodeBlockTabsTrigger value="pnpm">pnpm</CodeBlockTabsTrigger>
+    <CodeBlockTabsTrigger value="npm">npm</CodeBlockTabsTrigger>
+    <CodeBlockTabsTrigger value="yarn">yarn</CodeBlockTabsTrigger>
+    <CodeBlockTabsTrigger value="bun">bun</CodeBlockTabsTrigger>
+  </CodeBlockTabsList>
+
+  <CodeBlockTab value="pnpm">
+    ```bash
+    pnpm add @dayhaysoos/convex-database-chat
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="npm">
+    ```bash
+    npm install @dayhaysoos/convex-database-chat
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="yarn">
+    ```bash
+    yarn add @dayhaysoos/convex-database-chat
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="bun">
+    ```bash
+    bun add @dayhaysoos/convex-database-chat
+    ```
+  </CodeBlockTab>
+</CodeBlockTabs>
+
+## Add the component to Convex
+
+```ts
+// convex/convex.config.ts
+import { defineApp } from "convex/server";
+import databaseChat from "./components/databaseChat/convex.config";
+
+const app = defineApp();
+app.use(databaseChat);
+
+export default app;
+```
+
+## Set the OpenRouter API key
+
+`chat.send` and `chat.sendForExternalId` require an OpenRouter API key.
+
+```bash
+npx convex env set OPENROUTER_API_KEY your_key_here
+```
+
+<Callout title="Keep API keys server-side">
+  The API key must live in Convex environment variables. Do not expose it to clients.
+</Callout>

@@ -1,0 +1,65 @@
+---
+title: Chat Integration
+description: Call the component actions from your app.
+---
+
+The component exposes a built-in chat action that handles tool calling,
+delta-based streaming, and message persistence.
+
+## Using `chat.send`
+
+```ts
+// convex/chat.ts
+import { v } from "convex/values";
+import { action } from "./_generated/server";
+import { components } from "./_generated/api";
+
+export const sendMessage = action({
+  args: { conversationId: v.string(), message: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.runAction(components.databaseChat.chat.send, {
+      conversationId: args.conversationId as any,
+      message: args.message,
+      config: {
+        apiKey: process.env.OPENROUTER_API_KEY!,
+        model: "openai/gpt-4o",
+        systemPrompt: "You are a helpful assistant.",
+        tools: [],
+        maxMessagesForLLM: 50,
+        toolContext: { orgId: "org_123" },
+      },
+    });
+  },
+});
+```
+
+`chat.send` config options:
+
+- `apiKey` (required): OpenRouter API key.
+- `model` (optional): defaults to `openai/gpt-4o`.
+- `systemPrompt` (optional): falls back to the component default if omitted.
+- `tools` (optional): array of `DatabaseChatTool`.
+- `maxMessagesForLLM` (optional): defaults to 50.
+- `toolContext` (optional): server-only context merged into tool args.
+
+## External ID scoping
+
+Use `chat.sendForExternalId` to enforce ownership checks:
+
+```ts
+return await ctx.runAction(components.databaseChat.chat.sendForExternalId, {
+  conversationId: args.conversationId as any,
+  externalId: args.externalId,
+  message: args.message,
+  config: { apiKey: process.env.OPENROUTER_API_KEY! },
+});
+```
+
+If the conversation is missing or not owned by the `externalId`, the action
+throws `Not found` to avoid leaking existence across tenants.
+
+## Client wrapper alternative
+
+The `defineDatabaseChat` client (see [Client Wrapper](/docs/reference/client-wrapper))
+wraps the same actions and helps you pass tools and system prompts once instead
+of per call.

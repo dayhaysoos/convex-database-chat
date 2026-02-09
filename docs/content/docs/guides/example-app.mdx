@@ -1,0 +1,45 @@
+---
+title: Example App
+description: Run the included demo and view the live deployment.
+---
+
+The repository includes an e-commerce demo in `example/`.
+
+<Callout title="Live demo">
+  https://convex-database-chat-production.up.railway.app/
+</Callout>
+
+## Local setup
+
+```bash
+cd example
+npm install
+```
+
+```bash
+npx convex dev
+```
+
+```bash
+npx convex env set OPENROUTER_API_KEY your_key_here
+```
+
+```bash
+npm run seed
+```
+
+```bash
+npm run dev
+```
+
+## Optional: embeddings
+
+```bash
+npm run seed:embeddings
+```
+
+## Useful scripts
+
+- `npm run convex` - Convex dev server only
+- `npm run dev:ui` - Vite UI only
+- `npm run start` - Serve the production build
