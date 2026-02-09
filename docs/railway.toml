@@ -1,9 +1,10 @@
+
 [build]
 builder = "railpack"
-buildCommand = "corepack enable && pnpm install --frozen-lockfile && pnpm build"
+buildCommand = "npm ci && npm run build"
 
 [deploy]
-startCommand = "pnpm start"
+startCommand = "npm run start"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
