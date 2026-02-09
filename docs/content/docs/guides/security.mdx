@@ -1,0 +1,45 @@
+---
+title: Security and Multi-tenant Access
+description: Scope data with external IDs and tool context.
+---
+
+DatabaseChat is auth-agnostic. You must scope access with your own `externalId`
+and never accept it directly from untrusted clients.
+
+## Scoped endpoints
+
+These functions validate ownership and throw `Not found` if the record is
+missing or not owned by the `externalId`:
+
+- `conversations.getForExternalId`
+- `messages.listForExternalId`
+- `messages.getLatestForExternalId`
+- `stream.getStreamForExternalId`
+- `stream.listDeltasForExternalId`
+- `stream.abortForExternalId`
+- `chat.sendForExternalId`
+
+## Tool context
+
+Some tools need server-only context (org ID, user ID) that must never be exposed
+to the LLM. Pass that data via `toolContext` in `chat.send` or
+`chat.sendForExternalId`.
+
+```ts
+await ctx.runAction(components.databaseChat.chat.sendForExternalId, {
+  conversationId,
+  externalId,
+  message,
+  config: {
+    apiKey: process.env.OPENROUTER_API_KEY!,
+    toolContext: {
+      orgId,
+      userId,
+      externalId,
+    },
+  },
+});
+```
+
+`toolContext` is merged into tool arguments after validation and overrides
+any conflicting keys.

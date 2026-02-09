@@ -4,6 +4,11 @@
 *.log
 /.vscode/
 /docs/.vitepress/cache
+/docs/node_modules
+/docs/.react-router
+/docs/.source
+/docs/.vite
+/docs/build
 dist
 dist-ssr
 explorations

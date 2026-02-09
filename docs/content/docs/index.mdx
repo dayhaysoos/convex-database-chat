@@ -1,0 +1,63 @@
+---
+title: DatabaseChat
+description: Natural language database chat for Convex apps.
+---
+
+<Callout title="Alpha release">
+  DatabaseChat is in alpha. Expect breaking changes as the API settles.
+</Callout>
+
+DatabaseChat lets users ask questions about your data in plain English. It streams responses,
+calls your Convex queries as tools, and stores conversations in your own tables.
+
+<Cards>
+  <Card
+    title="Delta-based streaming"
+    description="Efficient O(n) streaming with client-side accumulation and server cleanup."
+    href="/docs/guides/streaming"
+  />
+  <Card
+    title="Tool calling"
+    description="Expose the exact queries your assistant can run, or generate tools from schema."
+    href="/docs/guides/tools"
+  />
+  <Card
+    title="React hooks"
+    description="Drop-in hooks for messages, streaming content, and smooth text rendering."
+    href="/docs/guides/react-hooks"
+  />
+</Cards>
+
+## What it provides
+
+| Feature | Description |
+| --- | --- |
+| Conversation storage | Stores chat history in `conversations` and `messages` tables |
+| Delta-based streaming | Efficient O(n) streaming via delta accumulation |
+| Abort support | Stop generation mid-stream with cleanup |
+| Tool calling | LLM can call your Convex queries |
+| React hooks | `useDatabaseChat`, `useMessagesWithStreaming`, and more |
+| Client wrapper | `defineDatabaseChat()` for type-safe integration |
+
+## What you implement
+
+| Your code | Description |
+| --- | --- |
+| Tool definitions | Describe what data the LLM can access |
+| Query functions | Convex queries or actions that back each tool |
+| Chat wrapper | App-side endpoints that call the component |
+| System prompt | Instructions that shape responses |
+| UI | Your chat interface (or hook-based integration) |
+
+## How it works
+
+1. User sends a message from your UI.
+2. Your app calls `components.databaseChat.chat.send` with tools, prompt, and API key.
+3. The component streams deltas and executes tool calls as needed.
+4. The UI subscribes to deltas and displays streaming content.
+
+## Next steps
+
+- Start with the [Installation](/docs/installation) guide.
+- Follow the [Quick Start](/docs/quick-start) to wire up tools and endpoints.
+- Dive into the [API Reference](/docs/reference/api-reference) when you need details.

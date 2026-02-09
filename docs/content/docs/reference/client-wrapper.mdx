@@ -1,0 +1,65 @@
+---
+title: Client Wrapper
+description: "defineDatabaseChat configuration and methods."
+---
+
+`defineDatabaseChat` creates a `DatabaseChatClient` that wraps the component
+endpoints with a consistent API.
+
+```ts
+import { defineDatabaseChat } from "./components/databaseChat/client";
+
+const chat = defineDatabaseChat(components.databaseChat, {
+  model: "openai/gpt-4o",
+  systemPrompt: "You are a helpful assistant.",
+  tools,
+  maxMessagesForDisplay: 100,
+  maxMessagesForLLM: 50,
+});
+```
+
+## Configuration options
+
+- `model`: default model for `chat.send` (default: `openai/gpt-4o`).
+- `systemPrompt`: default prompt for `chat.send`.
+- `tools`: explicit tool definitions.
+- `autoTools`: generate tools from schema-like definitions.
+- `maxMessagesForDisplay`: default message limit for `getMessages` (default: 100).
+- `maxMessagesForLLM`: default message limit for LLM context (default: 50).
+
+## `autoTools` shape
+
+```ts
+autoTools: {
+  tables: TableInfo[];
+  handlers: {
+    query: string;
+    count: string;
+    aggregate?: string;
+    search?: string;
+    getById?: string;
+  };
+  allowedTables: string[];
+  excludeFields?: Record<string, string[]>;
+  tableDescriptions?: Record<string, string>;
+  fieldDescriptions?: Record<string, string>;
+}
+```
+
+## Common methods
+
+- `createConversation(ctx, { externalId, title? })`
+- `getConversation(ctx, conversationId)`
+- `listConversations(ctx, externalId)`
+- `getMessages(ctx, conversationId)`
+- `getStreamState(ctx, conversationId)`
+- `getStreamDeltas(ctx, streamId, cursor)`
+- `abortStream(ctx, conversationId, reason?)`
+- `send(ctx, { conversationId, message, apiKey, model?, systemPrompt?, toolContext? })`
+
+## Advanced methods
+
+- `addMessage(ctx, conversationId, role, content, { toolCalls?, toolResults? })`
+- `getMessagesForLLM(ctx, conversationId, { systemPrompt?, includeTools? })`
+- `getTools()` and `getToolsForLLM()`
+- `getSystemPromptWithTools(basePrompt?)`

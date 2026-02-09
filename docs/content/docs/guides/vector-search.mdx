@@ -1,0 +1,53 @@
+---
+title: Vector Search
+description: Helpers for embeddings and vector tools.
+---
+
+The `@dayhaysoos/convex-database-chat/vector` entry provides utilities for
+embedding and formatting vector search results.
+
+## Generate embeddings
+
+```ts
+import { generateEmbedding } from "@dayhaysoos/convex-database-chat/vector";
+
+const embedding = await generateEmbedding({
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  text: args.query,
+});
+```
+
+Defaults:
+
+- Model: `openai/text-embedding-3-small`
+- Dimensions: `1536`
+
+## Format vector results
+
+```ts
+import { formatVectorResults } from "@dayhaysoos/convex-database-chat/vector";
+
+const formatted = formatVectorResults(results, docs, {
+  includeScore: true,
+  snippetLength: 200,
+  fields: ["name", "viewUrl"],
+});
+```
+
+## Define a vector search tool
+
+```ts
+import { defineVectorSearchTool } from "@dayhaysoos/convex-database-chat/vector";
+import { createFunctionHandle } from "convex/server";
+import { api } from "./_generated/api";
+
+const tools = [
+  defineVectorSearchTool({
+    name: "semanticSearch",
+    description: "Find candidates by meaning or concept",
+    handler: createFunctionHandle(api.chatTools.semanticSearchCandidates),
+  }),
+];
+```
+
+`defineVectorSearchTool` sets `handlerType` to `"action"` automatically.
