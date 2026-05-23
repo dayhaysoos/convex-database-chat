@@ -9,6 +9,10 @@ import {
   validateToolArgs,
 } from "./tools";
 import type { DatabaseChatTool } from "./tools";
+import {
+  buildSystemPromptWithTools,
+  type ToolGuidanceOption,
+} from "./toolGuidance";
 import { DeltaStreamer } from "./deltaStreamer";
 import { executeToolWithContext } from "./toolExecution";
 
@@ -16,6 +20,7 @@ const sendConfigValidator = v.object({
   apiKey: v.string(),
   model: v.optional(v.string()),
   systemPrompt: v.optional(v.string()),
+  toolGuidance: v.optional(v.string()),
   // Tools the LLM can call
   tools: v.optional(v.array(databaseChatToolValidator)),
   // Max messages to include in LLM context (default: 50)
@@ -93,12 +98,8 @@ async function sendInternal(
       apiKey: string;
       model?: string;
       systemPrompt?: string;
-      tools?: Array<{
-        name: string;
-        description: string;
-        parameters: unknown;
-        handler: string;
-      }>;
+      toolGuidance?: ToolGuidanceOption;
+      tools?: DatabaseChatTool[];
       maxMessagesForLLM?: number;
       toolContext?: Record<string, unknown>;
     };
@@ -139,9 +140,10 @@ async function sendInternal(
     await streamer.getStreamId();
 
     // 4. Build messages for OpenRouter
-    const systemPrompt = buildSystemPrompt(
+    const systemPrompt = buildSystemPromptWithTools(
       config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      tools
+      tools,
+      { toolGuidance: config.toolGuidance }
     );
     const openRouterMessages = buildMessages(messages, systemPrompt);
 
@@ -306,29 +308,6 @@ const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that can search and q
 When users ask questions, use the available tools to find relevant information.
 If you don't have access to a tool that can answer the question, say so.
 Always explain what you found in a clear, helpful way.`;
-
-/**
- * Build system prompt with tool descriptions
- */
-function buildSystemPrompt(
-  basePrompt: string,
-  tools: DatabaseChatTool[]
-): string {
-  if (tools.length === 0) {
-    return basePrompt;
-  }
-
-  const toolDescriptions = tools
-    .map((t) => `- ${t.name}: ${t.description}`)
-    .join("\n");
-
-  return `${basePrompt}
-
-You have access to the following tools to query the database:
-${toolDescriptions}
-
-Use these tools to answer questions about the data. You can call multiple tools if needed.`;
-}
 
 /**
  * Build messages array for OpenRouter API (without tools)

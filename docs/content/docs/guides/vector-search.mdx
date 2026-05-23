@@ -50,4 +50,7 @@ const tools = [
 ];
 ```
 
-`defineVectorSearchTool` sets `handlerType` to `"action"` automatically.
+`defineVectorSearchTool` sets `handlerType` to `"action"` and
+`metadata.kind` to `"semantic_search"` automatically. It does not set
+`metadata.resultContract` because `formatVectorResults` returns an array, not
+the standard `{ data, meta }` result envelope.

@@ -14,6 +14,18 @@
       "types": "./dist/src/vector.d.ts",
       "import": "./dist/src/vector.js"
     },
+    "./resultContract": {
+      "types": "./dist/convex/component/resultContract.d.ts",
+      "import": "./dist/convex/component/resultContract.js"
+    },
+    "./tools": {
+      "types": "./dist/convex/component/tools.d.ts",
+      "import": "./dist/convex/component/tools.js"
+    },
+    "./toolGuidance": {
+      "types": "./dist/convex/component/toolGuidance.d.ts",
+      "import": "./dist/convex/component/toolGuidance.js"
+    },
     "./test": "./src/test.ts",
     "./_generated/component.js": {
       "types": "./dist/convex/component/_generated/component.d.ts",

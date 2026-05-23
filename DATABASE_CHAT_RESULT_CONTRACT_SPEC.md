@@ -1,5 +1,9 @@
 # Convex Database Chat Result Contracts
 
+Status: implemented on `arch/result-contract-tooling-review` as a vertical
+slice covering result contracts, typed tool builders, tool reliability metadata,
+and automatic prompt guidance.
+
 ## Context
 
 This spec captures a proposed upstream feature for Convex Database Chat. It is motivated by a generic failure mode observed in downstream apps: users ask factual questions that combine totals, filtered lists, and follow-up pagination.

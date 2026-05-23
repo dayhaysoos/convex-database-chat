@@ -44,6 +44,11 @@ export type VectorSearchResult<IdType = string> = {
 /**
  * Tool definition compatible with DatabaseChat tools.
  */
+export type VectorToolMetadata = {
+  kind: "semantic_search";
+  resultContract?: "standard";
+};
+
 export interface VectorToolDefinition {
   /** Unique name for the tool (used by the LLM to call it). */
   name: string;
@@ -55,6 +60,8 @@ export interface VectorToolDefinition {
   handlerType?: "query" | "mutation" | "action";
   /** Convex function handle string to execute. */
   handler: string;
+  /** Reliability metadata consumed by DatabaseChat prompt guidance. */
+  metadata?: VectorToolMetadata;
 }
 
 /**
@@ -219,6 +226,9 @@ export function defineVectorSearchTool(
     description: options.description,
     handlerType: "action",
     handler: options.handler,
+    metadata: {
+      kind: "semantic_search",
+    },
     parameters: {
       type: "object",
       properties,

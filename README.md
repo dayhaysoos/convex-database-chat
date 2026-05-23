@@ -232,6 +232,48 @@ Note: When passing tools to the component chat action, `handler` should be a
 function handle created via `createFunctionHandle(...)`. Set `handlerType` to
 "action" for tools that run `ctx.vectorSearch`.
 
+### Standard result contracts and typed builders
+
+For count, deterministic list, and semantic-search tools that return the
+standard `{ data, meta }` result envelope, use the typed builders from the
+backend-safe tools entrypoint:
+
+```typescript
+import {
+  definePaginatedListTool,
+  enumFilter,
+  injectedString,
+} from "@dayhaysoos/convex-database-chat/tools";
+import type { DatabaseChatToolResult } from "@dayhaysoos/convex-database-chat/resultContract";
+
+type ProductRow = {
+  id: string;
+  name: string;
+  viewUrl: string;
+};
+
+const listProductsTool = definePaginatedListTool<ProductRow>({
+  name: "listProducts",
+  description: "List products matching deterministic filters.",
+  handler: "listProductsHandler",
+  filters: {
+    category: enumFilter({
+      values: ["electronics", "clothing", "home", "sports"] as const,
+    }),
+  },
+  injectedArgs: {
+    tenantId: injectedString(),
+  },
+});
+```
+
+Builders attach `tool.metadata.kind` and `metadata.resultContract = "standard"`.
+DatabaseChat uses that metadata to inject generic guidance by default, including
+using `meta.count` for exact totals, treating cursor results as pages, and not
+using semantic-search result length as a count. Set `toolGuidance: "disabled"`
+or pass a custom string in `defineDatabaseChat` / `chat.send` config to override
+the generated guidance.
+
 ### Example: E-commerce - Search products
 
 ```typescript

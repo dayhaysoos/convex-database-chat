@@ -74,6 +74,99 @@ If you want generic tools, the component includes helpers:
 
 Each helper returns a `DatabaseChatTool` and still requires a handler string.
 
+## Typed standard-result tools
+
+For tools that return the standard result contract, prefer the split builders.
+They generate the same `DatabaseChatTool` shape, attach reliability metadata,
+and keep model-visible filters nested under `filters`.
+
+```ts
+import {
+  defineCountTool,
+  definePaginatedListTool,
+  defineSemanticSearchTool,
+  enumFilter,
+  injectedString,
+  numberFilter,
+  stringFilter,
+  type InferToolHandlerArgs,
+  type InferToolResult,
+} from "@dayhaysoos/convex-database-chat/tools";
+import type { DatabaseChatToolResult } from "@dayhaysoos/convex-database-chat/resultContract";
+
+type ProductRow = {
+  id: string;
+  name: string;
+  price: number;
+  viewUrl: string;
+};
+
+export const listProductsTool = definePaginatedListTool<ProductRow>({
+  name: "listProducts",
+  description: "List products matching deterministic filters.",
+  handler: "handler_string",
+  filters: {
+    category: enumFilter({
+      values: ["electronics", "clothing", "home", "sports"] as const,
+      description: "Product category.",
+    }),
+    minPrice: numberFilter({ min: 0 }),
+    searchQuery: stringFilter(),
+  },
+  injectedArgs: {
+    tenantId: injectedString(),
+  },
+  pagination: {
+    defaultLimit: 20,
+    maxLimit: 100,
+  },
+});
+
+type HandlerArgs = InferToolHandlerArgs<typeof listProductsTool>;
+type HandlerResult = InferToolResult<typeof listProductsTool>;
+// HandlerResult is DatabaseChatToolResult<ProductRow>.
+```
+
+The LLM sees `filters`, `limit`, and `cursor`. It does not see injected args
+such as `tenantId`; those still appear in handler arg inference and can be
+merged from `toolContext`.
+
+Builder defaults:
+
+- `defineCountTool`: exact totals, no `limit`.
+- `definePaginatedListTool`: deterministic cursor pages, default limit 20, max 100.
+- `defineSemanticSearchTool`: sampled top-K relevance results, default limit 10, max 50.
+
+## Standard result contract
+
+Handlers for standard-result tools should return:
+
+```ts
+const result: DatabaseChatToolResult<ProductRow> = {
+  data: rows,
+  meta: {
+    scope: { type: "workspace", id: workspaceId },
+    appliedFilters: normalizedFilters,
+    count: exactCount,
+    returned: rows.length,
+    exhaustive: false,
+    truncated: true,
+    truncationReason: "row_limit",
+    sampled: false,
+    pagination: {
+      cursor,
+      hasMore: nextCursor !== null,
+      nextCursor,
+      pageSize: limit,
+    },
+  },
+};
+```
+
+Use `validateToolResultContract(result)` in tests or development checks when
+you want structured errors for contract invariants such as
+`meta.returned === data.length`.
+
 ## Auto-generated tools
 
 You can generate tools from schema-like definitions with `generateToolsFromSchema`.

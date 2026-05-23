@@ -75,3 +75,39 @@ Types:
 - `UseConversationsReturn`
 - `UseSmoothTextOptions`
 - `SmoothTextProps`
+
+## Backend-safe exports
+
+These subpaths avoid importing the React entrypoint from Convex functions.
+
+### `@dayhaysoos/convex-database-chat/resultContract`
+
+- `DatabaseChatToolResult<Row>`
+- `DatabaseChatResultMeta`
+- `DatabaseChatScope`
+- `DatabaseChatResultValidationError`
+- `validateToolResultContract(result)`
+- `isDatabaseChatToolResult(result)`
+
+### `@dayhaysoos/convex-database-chat/tools`
+
+- `defineCountTool`
+- `definePaginatedListTool`
+- `defineSemanticSearchTool`
+- `stringFilter`
+- `numberFilter`
+- `booleanFilter`
+- `enumFilter`
+- `injectedString`
+- `InferToolModelArgs<Tool>`
+- `InferToolHandlerArgs<Tool>`
+- `InferToolResult<Tool>`
+
+Built tools set `tool.metadata.kind` to `count`, `paginated_list`, or
+`semantic_search` and set `metadata.resultContract` to `standard`.
+
+### `@dayhaysoos/convex-database-chat/toolGuidance`
+
+- `buildToolReliabilityGuidance(tools)`
+- `buildSystemPromptWithTools(basePrompt, tools, options?)`
+- `getToolKind(tool)`

@@ -83,6 +83,10 @@ import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 import type { TableInfo, SchemaToolHandlers } from "./schemaTools";
 import { generateToolsFromSchema } from "./schemaTools";
 import { formatToolsForLLM, findTool, validateToolArgs } from "./tools";
+import {
+  buildSystemPromptWithTools,
+  type ToolGuidanceOption,
+} from "./toolGuidance";
 
 // Type for the component API (what apps get from components.databaseChat)
 type ComponentApi = typeof api;
@@ -97,6 +101,8 @@ export interface DatabaseChatConfig {
   model?: string;
   /** Default system prompt */
   systemPrompt?: string;
+  /** Reliability guidance for standard tool result contracts (default: "auto"). */
+  toolGuidance?: ToolGuidanceOption;
   /**
    * Explicit tool definitions.
    * Use this for precise control over what queries the LLM can run.
@@ -133,6 +139,8 @@ export interface SendMessageOptions {
   model?: string;
   /** Override system prompt for this message */
   systemPrompt?: string;
+  /** Override tool reliability guidance for this message */
+  toolGuidance?: ToolGuidanceOption;
   /** Server-side context merged into tool args (not exposed to LLM) */
   toolContext?: Record<string, unknown>;
 }
@@ -349,6 +357,7 @@ export class DatabaseChatClient {
         apiKey: options.apiKey,
         model: options.model ?? this.config.model,
         systemPrompt: options.systemPrompt ?? this.config.systemPrompt,
+        toolGuidance: options.toolGuidance ?? this.config.toolGuidance,
         tools: this.tools.length > 0 ? this.tools : undefined,
         maxMessagesForLLM: this.config.maxMessagesForLLM ?? 50,
         toolContext: options.toolContext,
@@ -412,7 +421,11 @@ export class DatabaseChatClient {
   async getMessagesForLLM(
     ctx: QueryCtx,
     conversationId: string,
-    options?: { systemPrompt?: string; includeTools?: boolean }
+    options?: {
+      systemPrompt?: string;
+      includeTools?: boolean;
+      toolGuidance?: ToolGuidanceOption;
+    }
   ): Promise<{
     messages: Array<{ role: string; content: string }>;
     tools?: ReturnType<typeof formatToolsForLLM>;
@@ -425,17 +438,13 @@ export class DatabaseChatClient {
 
     const formatted: Array<{ role: string; content: string }> = [];
 
-    // Build system prompt with tool descriptions if tools are configured
-    let systemPrompt = options?.systemPrompt ?? this.config.systemPrompt ?? "";
-
-    if (this.hasTools() && options?.includeTools !== false) {
-      const toolDescriptions = this.tools
-        .map((t) => `- ${t.name}: ${t.description}`)
-        .join("\n");
-      systemPrompt += systemPrompt
-        ? `\n\nYou have access to the following tools to query the database:\n${toolDescriptions}`
-        : `You have access to the following tools to query the database:\n${toolDescriptions}`;
-    }
+    const basePrompt = options?.systemPrompt ?? this.config.systemPrompt ?? "";
+    const systemPrompt =
+      this.hasTools() && options?.includeTools !== false
+        ? buildSystemPromptWithTools(basePrompt, this.tools, {
+            toolGuidance: options?.toolGuidance ?? this.config.toolGuidance,
+          })
+        : basePrompt;
 
     if (systemPrompt) {
       formatted.push({ role: "system", content: systemPrompt });
@@ -473,20 +482,19 @@ export class DatabaseChatClient {
   /**
    * Build the system prompt with optional tool descriptions.
    */
-  getSystemPromptWithTools(basePrompt?: string): string {
+  getSystemPromptWithTools(
+    basePrompt?: string,
+    toolGuidance?: ToolGuidanceOption
+  ): string {
     const prompt = basePrompt ?? this.config.systemPrompt ?? "";
 
     if (!this.hasTools()) {
       return prompt;
     }
 
-    const toolDescriptions = this.tools
-      .map((t) => `- ${t.name}: ${t.description}`)
-      .join("\n");
-
-    return prompt
-      ? `${prompt}\n\nYou have access to the following tools to query the database:\n${toolDescriptions}`
-      : `You have access to the following tools to query the database:\n${toolDescriptions}`;
+    return buildSystemPromptWithTools(prompt, this.tools, {
+      toolGuidance: toolGuidance ?? this.config.toolGuidance,
+    });
   }
 }
 

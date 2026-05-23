@@ -16,11 +16,16 @@ _Avoid_: response, payload
 The model-visible description of what a tool can do before it is called, including its arguments, handler, and generic reliability kind.
 _Avoid_: tool API, function schema
 
+**Tool Reliability Guidance**:
+Generic prompt guidance generated from tool metadata that teaches the assistant how to interpret count, paginated list, semantic search, unknown, and standard-contract results.
+_Avoid_: app prompt, domain prompt
+
 ## Relationships
 
 - A **Tool Capability** produces a **Tool Result** when the assistant calls it.
 - A **Standard Result Contract** is an optional shape for a **Tool Result**.
 - A **Standard Result Contract** describes a specific call; **Tool Capability** metadata describes the default expectation before a call.
+- **Tool Reliability Guidance** is derived from **Tool Capability** metadata, but **Tool Result** metadata wins for a specific call.
 
 ## Example Dialogue
 
