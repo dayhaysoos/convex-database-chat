@@ -50,6 +50,7 @@ export interface ToolParameterSchema {
   type: "object";
   properties: Record<string, ToolParameterPropertySchema>;
   required?: string[];
+  additionalProperties?: boolean;
 }
 
 export type DatabaseChatToolKind =
@@ -438,6 +439,9 @@ function validateObjectArgs(
   for (const [key, value] of Object.entries(args)) {
     const propertySchema = properties[key];
     if (!propertySchema) {
+      if (schema.additionalProperties === false) {
+        return `Unknown field: ${joinPath(path, key)}`;
+      }
       continue;
     }
 
@@ -493,6 +497,15 @@ function validateValueType(
       return null;
     }
     return `Field ${path} expected ${expectedType}, got ${actualType}`;
+  }
+
+  if (expectedType === "number" && typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      return `Field ${path} must be >= ${schema.minimum}`;
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      return `Field ${path} must be <= ${schema.maximum}`;
+    }
   }
 
   return null;

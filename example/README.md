@@ -15,7 +15,15 @@ A simple demo showing how to use the `@dayhaysoo/convex-database-chat` component
 
 ### 1. Install dependencies
 
+The demo consumes the repository package through `file:..`, so install the root
+dependencies before installing the example dependencies.
+
 ```bash
+# From repo root
+pnpm install
+
+# Then install the example
+cd example
 npm install
 ```
 
@@ -58,7 +66,8 @@ meaning-based results.
 npm run dev
 ```
 
-This runs both the Convex dev server and the Vite UI in one command.
+This builds and watches the local package, then runs both the Convex dev server
+and the Vite UI in one command.
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 Tip: use the **Tools** button in the chat header to see which tools are being
@@ -76,8 +85,8 @@ npm run dev:ui
 
 ## Local package development
 
-If you want the example to use the local package (without publishing), you can
-use the helper script:
+The example already uses the local package through `file:..`. For the older
+`npm link` workflow, you can use the helper script:
 
 ```bash
 # From repo root

@@ -225,6 +225,11 @@ describe("tools", () => {
           filters: { status: 123, owner: "alice" },
         })
       ).toBe("Field filters.status expected string, got number");
+      expect(
+        validateToolArgs(tool, {
+          filters: { status: "active", unexpected: "value" },
+        })
+      ).toBe("Unknown field: filters.unexpected");
     });
 
     it("defines a paginated list tool with default cursor args and typed injected args", () => {
@@ -267,6 +272,12 @@ describe("tools", () => {
       expect(tool.parameters.properties.limit.description).toContain(
         "default: 25, max: 75"
       );
+      expect(validateToolArgs(tool, { limit: 76 })).toBe(
+        "Field limit must be <= 75"
+      );
+      expect(
+        validateToolArgs(tool, { filters: { createdAfter: -1 } })
+      ).toBe("Field filters.createdAfter must be >= 0");
 
       type ModelArgs = InferToolModelArgs<typeof tool>;
       type HandlerArgs = InferToolHandlerArgs<typeof tool>;
