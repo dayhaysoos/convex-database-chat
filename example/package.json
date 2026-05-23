@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"npm run dev:ui\" \"npm run convex\"",
+    "predev": "npm --prefix .. run build",
+    "dev": "concurrently -k \"npm run dev:package\" \"npm run dev:ui\" \"npm run convex\"",
+    "dev:package": "npm --prefix .. run build:watch",
     "dev:ui": "vite --port 3000 --strictPort",
+    "prebuild": "npm --prefix .. run build",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "start": "serve dist -s -l ${PORT:-3000}",
