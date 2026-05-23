@@ -138,6 +138,7 @@ export const toolParameterSchemaValidator = v.object({
   type: v.literal("object"),
   properties: v.any(), // Complex nested structure
   required: v.optional(v.array(v.string())),
+  additionalProperties: v.optional(v.boolean()),
 });
 
 export const databaseChatToolValidator = v.object({

@@ -50,6 +50,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
               };
               name: string;
               parameters: {
+                additionalProperties?: boolean;
                 properties: any;
                 required?: Array<string>;
                 type: "object";

@@ -83,6 +83,7 @@ export declare const components: {
               };
               name: string;
               parameters: {
+                additionalProperties?: boolean;
                 properties: any;
                 required?: Array<string>;
                 type: "object";
@@ -125,6 +126,7 @@ export declare const components: {
               };
               name: string;
               parameters: {
+                additionalProperties?: boolean;
                 properties: any;
                 required?: Array<string>;
                 type: "object";

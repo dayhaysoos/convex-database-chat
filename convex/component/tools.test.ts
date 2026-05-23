@@ -102,6 +102,23 @@ describe("tools", () => {
       expect(error).toBeNull();
     });
 
+    it("rejects top-level extra fields when additionalProperties is false", () => {
+      const closedTool: DatabaseChatTool = {
+        ...sampleTool,
+        parameters: {
+          ...sampleTool.parameters,
+          additionalProperties: false,
+        },
+      };
+
+      const error = validateToolArgs(closedTool, {
+        skill: "JavaScript",
+        extraField: "value",
+      });
+
+      expect(error).toBe("Unknown field: extraField");
+    });
+
     it("allows null for optional fields", () => {
       const error = validateToolArgs(sampleTool, { skill: "JavaScript", limit: null });
       expect(error).toBeNull();
