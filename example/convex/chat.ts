@@ -3,6 +3,7 @@ import { createFunctionHandle } from "convex/server";
 import { action, mutation, query } from "./_generated/server";
 import { components, api } from "./_generated/api";
 import { defineVectorSearchTool } from "@dayhaysoos/convex-database-chat/vector";
+import type { DatabaseChatTool } from "@dayhaysoos/convex-database-chat/tools";
 
 // =============================================================================
 // System Prompt
@@ -35,27 +36,8 @@ Example response format:
 // Tool Definitions
 // =============================================================================
 
-type ToolParameters = {
-  type: "object";
-  properties: Record<
-    string,
-    {
-      type: "string" | "number" | "boolean" | "array" | "object";
-      description?: string;
-      enum?: string[];
-      items?: { type: "string" | "number" | "boolean" | "array" | "object" };
-    }
-  >;
-  required?: string[];
-};
-
-type ToolDefinition = {
-  name: string;
-  description: string;
-  parameters: ToolParameters;
-  handler: string;
-  handlerType?: "query" | "mutation" | "action";
-};
+type ToolParameters = DatabaseChatTool["parameters"];
+type ToolDefinition = DatabaseChatTool;
 
 const TOOL_SPECS: Record<
   string,
@@ -355,6 +337,7 @@ export const sendMessage = action({
         apiKey,
         model: "anthropic/claude-sonnet-4",
         systemPrompt: SYSTEM_PROMPT,
+        toolGuidance: "auto",
         tools,
       },
     })) as { success: boolean; content?: string; error?: string };
