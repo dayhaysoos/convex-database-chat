@@ -32,6 +32,10 @@ npx convex env set OPENROUTER_API_KEY your_key_here
 npm run seed
 ```
 
+This seeds 250 products across `electronics`, `home`, `clothing`, and `sports`.
+If you previously seeded the older 50-product catalog, rerun `npm run seed` to
+insert the missing generated variants.
+
 ```bash
 npm run dev
 ```
@@ -47,3 +51,26 @@ npm run seed:embeddings
 - `npm run convex` - Convex dev server only
 - `npm run dev:ui` - Vite UI only
 - `npm run start` - Serve the production build
+
+## Standard tool QA prompts
+
+Open the chat, toggle the **Tools** panel, and run these prompts:
+
+- `How many electronics are under $50?`
+  - Expected tool: `countProducts`
+  - Expected metadata: `count 30`, `returned 0`, `truncated false`
+- `Show me 5 electronics under $50.`
+  - Expected tool: `listProducts`
+  - Expected metadata: `count 30`, `returned 5`, `hasMore true`
+- `Show more.`
+  - Expected tool: `listProducts` with the previous `cursor`
+- `Find products for a home office setup.`
+  - Expected tool: `semanticSearchProducts`
+  - Expected metadata: `sampled true`, `truncated true`
+- `Use the legacy raw search tool for sports products.`
+  - Expected tool: `rawSearchProducts`
+  - Expected raw array result
+
+These prompts exercise the standard count/list/semantic contracts, hidden
+`toolContext` injection, cursor continuation, semantic action execution, and
+legacy raw-tool compatibility.

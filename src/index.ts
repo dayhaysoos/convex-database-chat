@@ -36,4 +36,4 @@ export {
   type UseConversationsReturn,
   type UseSmoothTextOptions,
   type SmoothTextProps,
-} from "./react";
+} from "./react.js";

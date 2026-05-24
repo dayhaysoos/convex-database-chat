@@ -1,13 +1,14 @@
 # E-commerce Database Chat Demo
 
-A simple demo showing how to use the `@dayhaysoo/convex-database-chat` component to query an e-commerce product database using natural language.
+A simple demo showing how to use the `@dayhaysoo/convex-database-chat` component
+to query an e-commerce product database using natural language.
 
 ## Features
 
-- 🛒 50 mock e-commerce products across 4 categories
+- 🛒 250 mock e-commerce products across 4 categories
 - 💬 Natural language queries powered by Claude via OpenRouter
 - ⚡ Real-time streaming responses
-- 🔍 Search by name, category, price range
+- 🔍 Count, list, and search by nested filters
 - 🧠 Semantic search with vector embeddings
 - 📊 Get inventory statistics and low-stock alerts
 
@@ -37,7 +38,8 @@ This will prompt you to create a new Convex project and set up your environment.
 
 ### 3. Add OpenRouter API Key
 
-Get an API key from [OpenRouter](https://openrouter.ai/) and add it to your Convex environment:
+Get an API key from [OpenRouter](https://openrouter.ai/) and add it to your
+Convex environment:
 
 ```bash
 npx convex env set OPENROUTER_API_KEY your_key_here
@@ -49,7 +51,9 @@ npx convex env set OPENROUTER_API_KEY your_key_here
 npm run seed
 ```
 
-This populates the database with 50 mock products.
+This populates the database with 250 mock products. If you already seeded the
+older 50-product catalog, this command adds the missing generated variants
+without duplicating existing product names.
 
 ### 5. Generate embeddings for semantic search (optional)
 
@@ -67,8 +71,8 @@ npm run dev
 ```
 
 This builds and watches the local package, then runs both the Convex dev server
-and the Vite UI in one command.
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+and the Vite UI in one command. Open
+[http://localhost:3000](http://localhost:3000) in your browser.
 
 Tip: use the **Tools** button in the chat header to see which tools are being
 called (including semantic search).
@@ -146,7 +150,8 @@ example/
 
 1. **User asks a question** → Sent to Convex action
 2. **Action calls DatabaseChat component** → LLM with tool definitions
-3. **LLM decides to call tools** → e.g., `searchProducts({ category: "electronics" })`
+3. **LLM decides to call tools** → e.g.,
+   `searchProducts({ category: "electronics" })`
 4. **Tool executes Convex query** → Returns product data
 5. **LLM formats response** → With markdown links to products
 6. **Response streamed to UI** → Real-time updates via Convex subscriptions

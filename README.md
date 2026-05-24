@@ -1,8 +1,11 @@
 # DatabaseChat Component
 
-> **Alpha Release** - A Convex component for adding natural language database queries to your app.
+> **Alpha Release** - A Convex component for adding natural language database
+> queries to your app.
 
-DatabaseChat lets users ask questions about your data in plain English. The LLM calls tools you define to query your database and returns helpful, actionable responses.
+DatabaseChat lets users ask questions about your data in plain English. The LLM
+calls tools you define to query your database and returns helpful, actionable
+responses.
 
 ## Table of Contents
 
@@ -25,40 +28,44 @@ DatabaseChat lets users ask questions about your data in plain English. The LLM 
 
 The component provides:
 
-| Feature | Description |
-|---------|-------------|
-| **Conversation storage** | Stores chat history in `conversations` and `messages` tables |
-| **Delta-based streaming** | Efficient O(n) streaming via delta accumulation |
-| **Abort support** | Stop generation mid-stream with proper cleanup |
-| **Tool calling** | LLM can call your Convex queries to fetch data |
-| **React hooks** | `useDatabaseChat`, `useMessagesWithStreaming`, etc. |
-| **Client wrapper** | `defineDatabaseChat()` for type-safe integration |
+| Feature                   | Description                                                  |
+| ------------------------- | ------------------------------------------------------------ |
+| **Conversation storage**  | Stores chat history in `conversations` and `messages` tables |
+| **Delta-based streaming** | Efficient O(n) streaming via delta accumulation              |
+| **Abort support**         | Stop generation mid-stream with proper cleanup               |
+| **Tool calling**          | LLM can call your Convex queries to fetch data               |
+| **React hooks**           | `useDatabaseChat`, `useMessagesWithStreaming`, etc.          |
+| **Client wrapper**        | `defineDatabaseChat()` for type-safe integration             |
 
 **You implement:**
 
-| Your Code | Description |
-|-----------|-------------|
-| **Tool definitions** | What queries the LLM can call |
-| **Query functions** | The actual Convex queries |
-| **Chat integration** | Wire tools to the component |
-| **System prompt** | Instructions for your domain |
-| **UI component** | Chat interface (or use the hooks) |
+| Your Code            | Description                       |
+| -------------------- | --------------------------------- |
+| **Tool definitions** | What queries the LLM can call     |
+| **Query functions**  | The actual Convex queries         |
+| **Chat integration** | Wire tools to the component       |
+| **System prompt**    | Instructions for your domain      |
+| **UI component**     | Chat interface (or use the hooks) |
 
 ### How Delta-Based Streaming Works
 
-Traditional streaming sends the full accumulated content on every update, resulting in O(n²) bandwidth:
+Traditional streaming sends the full accumulated content on every update,
+resulting in O(n²) bandwidth:
+
 - Update 1: "H" (1 byte)
 - Update 2: "He" (2 bytes)
 - Update 3: "Hel" (3 bytes)
 - ...for a 1000 character response, you send ~500,000 bytes total
 
 Delta-based streaming sends only new content, resulting in O(n) bandwidth:
+
 - Delta 1: "H" (1 byte)
 - Delta 2: "e" (1 byte)
 - Delta 3: "l" (1 byte)
 - ...for a 1000 character response, you send ~1000 bytes total
 
-The client accumulates deltas locally and the server cleans them up when the stream finishes.
+The client accumulates deltas locally and the server cleans them up when the
+stream finishes.
 
 ---
 
@@ -188,10 +195,13 @@ export const getStreamDeltas = query({
 export const abortStream = mutation({
   args: { conversationId: v.string(), reason: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    return await ctx.runMutation(components.databaseChat.stream.abortByConversation, {
-      conversationId: args.conversationId as any,
-      reason: args.reason ?? "User cancelled",
-    });
+    return await ctx.runMutation(
+      components.databaseChat.stream.abortByConversation,
+      {
+        conversationId: args.conversationId as any,
+        reason: args.reason ?? "User cancelled",
+      },
+    );
   },
 });
 
@@ -212,25 +222,30 @@ Tools tell the LLM what queries it can call. Each tool needs:
 
 ```typescript
 interface Tool {
-  name: string;           // Unique identifier
-  description: string;    // What the tool does (LLM reads this!)
-  parameters: {           // JSON Schema for arguments
+  name: string; // Unique identifier
+  description: string; // What the tool does (LLM reads this!)
+  parameters: {
+    // JSON Schema for arguments
     type: "object";
-    properties: Record<string, {
-      type: "string" | "number" | "boolean" | "array" | "object";
-      description?: string;
-      enum?: string[];    // For constrained values
-    }>;
+    properties: Record<
+      string,
+      {
+        type: "string" | "number" | "boolean" | "array" | "object";
+        description?: string;
+        enum?: string[]; // For constrained values
+      }
+    >;
     required?: string[];
   };
-  handlerType?: "query" | "mutation" | "action"; // Default: "query"
-  handler: string;        // Function handle string (createFunctionHandle)
+  handlerType?: "query" | "mutation" | "action"; // Raw tools default to "query"
+  handler: string; // Function handle string (createFunctionHandle)
 }
 ```
 
 Note: When passing tools to the component chat action, `handler` should be a
-function handle created via `createFunctionHandle(...)`. Set `handlerType` to
-"action" for tools that run `ctx.vectorSearch`.
+function handle created via `await createFunctionHandle(...)` inside a Convex
+function. Set `handlerType` to `"action"` for raw tools that run
+`ctx.vectorSearch`. `defineSemanticSearchTool` defaults to `"action"`.
 
 ### Standard result contracts and typed builders
 
@@ -274,6 +289,12 @@ using semantic-search result length as a count. Set `toolGuidance: "disabled"`
 or pass a custom string in `defineDatabaseChat` / `chat.send` config to override
 the generated guidance.
 
+Builder defaults:
+
+- `defineCountTool`: exact totals, query handler by default.
+- `definePaginatedListTool`: cursor pages, query handler by default.
+- `defineSemanticSearchTool`: sampled top-K results, action handler by default.
+
 ### Example: E-commerce - Search products
 
 ```typescript
@@ -316,7 +337,8 @@ const searchProductsTool = {
 ```typescript
 const getTasksTool = {
   name: "getTasks",
-  description: "Get tasks with optional filters for status, assignee, or project",
+  description:
+    "Get tasks with optional filters for status, assignee, or project",
   parameters: {
     type: "object",
     properties: {
@@ -379,15 +401,19 @@ const searchArticlesTool = {
 
 ### Tips for tool descriptions
 
-- **Be specific**: "Search products by name, category, or price" is better than "Search products"
-- **List available options**: "Available categories: electronics, clothing, home, sports"
-- **Explain what each parameter does**: The LLM uses descriptions to decide which to use
+- **Be specific**: "Search products by name, category, or price" is better than
+  "Search products"
+- **List available options**: "Available categories: electronics, clothing,
+  home, sports"
+- **Explain what each parameter does**: The LLM uses descriptions to decide
+  which to use
 
 ---
 
 ## Implementing Query Functions
 
-Your query functions do the actual database work. They receive the arguments the LLM provides.
+Your query functions do the actual database work. They receive the arguments the
+LLM provides.
 
 ### Example: E-commerce - Search with filters
 
@@ -412,7 +438,7 @@ export const searchProducts = query({
       price: v.number(),
       inStock: v.boolean(),
       viewUrl: v.string(),
-    })
+    }),
   ),
   handler: async (ctx, args) => {
     const limit = Math.min(args.limit ?? 20, 100);
@@ -494,7 +520,8 @@ export const getOrderStats = query({
 
 ## Creating the Chat Integration
 
-The chat integration wires your tools to the component and handles the LLM interaction.
+The chat integration wires your tools to the component and handles the LLM
+interaction.
 
 ### Full sendMessage implementation
 
@@ -505,7 +532,9 @@ import { action } from "./_generated/server";
 import { components, api } from "./_generated/api";
 
 // Your tools array and system prompt
-const TOOLS = [/* your tools */];
+const TOOLS = [
+  /* your tools */
+];
 const SYSTEM_PROMPT = `/* your prompt */`;
 
 export const sendMessage = action({
@@ -535,7 +564,7 @@ export const sendMessage = action({
       // 2. Get conversation history
       const rawMessages = await ctx.runQuery(
         components.databaseChat.messages.list,
-        { conversationId: args.conversationId as any }
+        { conversationId: args.conversationId as any },
       );
 
       // 3. Build messages array
@@ -545,9 +574,12 @@ export const sendMessage = action({
       ];
 
       // 4. Create stream for delta-based streaming
-      const streamId = await ctx.runMutation(components.databaseChat.stream.create, {
-        conversationId: args.conversationId as any,
-      });
+      const streamId = await ctx.runMutation(
+        components.databaseChat.stream.create,
+        {
+          conversationId: args.conversationId as any,
+        },
+      );
 
       // 5. Call LLM with tools using delta-based streaming
       let deltaCursor = 0;
@@ -557,12 +589,15 @@ export const sendMessage = action({
         TOOLS,
         async (deltaText) => {
           // Send only new text (delta), not accumulated content
-          const success = await ctx.runMutation(components.databaseChat.stream.addDelta, {
-            streamId,
-            start: deltaCursor,
-            end: deltaCursor + 1,
-            parts: [{ type: "text-delta", text: deltaText }],
-          });
+          const success = await ctx.runMutation(
+            components.databaseChat.stream.addDelta,
+            {
+              streamId,
+              start: deltaCursor,
+              end: deltaCursor + 1,
+              parts: [{ type: "text-delta", text: deltaText }],
+            },
+          );
           deltaCursor++;
           // If addDelta returns false, stream was aborted
           if (!success) {
@@ -571,11 +606,13 @@ export const sendMessage = action({
         },
         async (toolName, toolArgs) => {
           return await executeToolCall(ctx, toolName, toolArgs);
-        }
+        },
       );
 
       // 6. Finish streaming (cleans up deltas)
-      await ctx.runMutation(components.databaseChat.stream.finish, { streamId });
+      await ctx.runMutation(components.databaseChat.stream.finish, {
+        streamId,
+      });
 
       // 7. Save assistant response
       await ctx.runMutation(components.databaseChat.messages.add, {
@@ -600,7 +637,7 @@ export const sendMessage = action({
 async function executeToolCall(
   ctx: any,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Promise<unknown> {
   switch (toolName) {
     case "searchProducts":
@@ -622,7 +659,10 @@ async function callLLMWithTools(
   messages: Array<{ role: string; content: string }>,
   tools: any[],
   onDelta: (deltaText: string) => Promise<void>, // Note: receives delta, not accumulated content
-  executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>
+  executeTool: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<unknown>,
 ): Promise<{ content: string }> {
   const formattedTools = tools.map((t) => ({
     type: "function" as const,
@@ -644,7 +684,7 @@ async function callLLMWithTools(
       apiKey,
       currentMessages,
       formattedTools,
-      onDelta
+      onDelta,
     );
 
     // If no tool calls, we're done
@@ -812,7 +852,7 @@ function useDeltaStreaming(conversationId: string | null) {
   // Subscribe to stream state
   const streamState = useQuery(
     api.chat.getStreamState,
-    conversationId ? { conversationId } : "skip"
+    conversationId ? { conversationId } : "skip",
   );
 
   const streamId = streamState?.streamId ?? null;
@@ -831,14 +871,16 @@ function useDeltaStreaming(conversationId: string | null) {
   // Fetch deltas from cursor
   const deltas = useQuery(
     api.chat.getStreamDeltas,
-    streamId && status === "streaming" ? { streamId, cursor } : "skip"
+    streamId && status === "streaming" ? { streamId, cursor } : "skip",
   );
 
   // Accumulate new deltas
   useEffect(() => {
     if (!deltas || deltas.length === 0) return;
 
-    const newDeltas = deltas.filter(d => d.start >= lastProcessedEndRef.current);
+    const newDeltas = deltas.filter(
+      (d) => d.start >= lastProcessedEndRef.current,
+    );
     if (newDeltas.length === 0) return;
 
     let maxEnd = lastProcessedEndRef.current;
@@ -854,14 +896,15 @@ function useDeltaStreaming(conversationId: string | null) {
     }
 
     if (newText) {
-      setAccumulatedContent(prev => prev + newText);
+      setAccumulatedContent((prev) => prev + newText);
     }
     lastProcessedEndRef.current = maxEnd;
     if (maxEnd > cursor) setCursor(maxEnd);
   }, [deltas, cursor]);
 
   return {
-    content: status === "streaming" && accumulatedContent ? accumulatedContent : null,
+    content:
+      status === "streaming" && accumulatedContent ? accumulatedContent : null,
     isStreaming: status === "streaming",
   };
 }
@@ -875,14 +918,15 @@ export function ChatWidget() {
   const createConversation = useMutation(api.chat.createConversation);
   const sendMessage = useAction(api.chat.sendMessage);
   const abortStream = useMutation(api.chat.abortStream);
-  
+
   const messages = useQuery(
     api.chat.getMessages,
-    conversationId ? { conversationId } : "skip"
+    conversationId ? { conversationId } : "skip",
   );
-  
+
   // Use delta-based streaming
-  const { content: streamingContent, isStreaming } = useDeltaStreaming(conversationId);
+  const { content: streamingContent, isStreaming } =
+    useDeltaStreaming(conversationId);
 
   // Create conversation on open
   useEffect(() => {
@@ -909,11 +953,7 @@ export function ChatWidget() {
   };
 
   if (!isOpen) {
-    return (
-      <button onClick={() => setIsOpen(true)}>
-        Open Chat
-      </button>
-    );
+    return <button onClick={() => setIsOpen(true)}>Open Chat</button>;
   }
 
   return (
@@ -925,7 +965,7 @@ export function ChatWidget() {
           <MarkdownContent content={msg.content} />
         </div>
       ))}
-      
+
       {/* Streaming */}
       {streamingContent && (
         <div>
@@ -955,7 +995,8 @@ export function ChatWidget() {
 
 ### Text smoothing with `useSmoothText`
 
-The `useSmoothText` hook creates a typewriter effect for streaming text, making it feel more natural instead of jumping in chunks:
+The `useSmoothText` hook creates a typewriter effect for streaming text, making
+it feel more natural instead of jumping in chunks:
 
 ```tsx
 import { useSmoothText, SmoothText } from "@dayhaysoos/convex-database-chat";
@@ -968,24 +1009,22 @@ function StreamingMessage({ text, isStreaming }) {
     // Optional: customize speed (default: 200 chars/sec)
     initialCharsPerSecond: 200,
   });
-  
+
   return <div>{visibleText}</div>;
 }
 
 // Or use the component directly
 function Message({ text, isStreaming }) {
-  return (
-    <SmoothText 
-      text={text} 
-      startStreaming={isStreaming}
-    />
-  );
+  return <SmoothText text={text} startStreaming={isStreaming} />;
 }
 ```
 
 **Options:**
-- `startStreaming` - Set to `true` for streaming messages, `false` for completed messages (shows immediately)
-- `initialCharsPerSecond` - Starting speed, adapts over time to match text arrival rate
+
+- `startStreaming` - Set to `true` for streaming messages, `false` for completed
+  messages (shows immediately)
+- `initialCharsPerSecond` - Starting speed, adapts over time to match text
+  arrival rate
 - `minDelayMs` / `maxDelayMs` - Bounds for character delay
 
 ### Rendering markdown links
@@ -1052,10 +1091,14 @@ export const semanticSearchCandidates = action({
       // model: "your-embedding-model",
     });
 
-    const results = await ctx.vectorSearch("applications", "by_resume_embedding", {
-      vector: embedding,
-      limit: args.limit ?? 20,
-    });
+    const results = await ctx.vectorSearch(
+      "applications",
+      "by_resume_embedding",
+      {
+        vector: embedding,
+        limit: args.limit ?? 20,
+      },
+    );
 
     const docs = await ctx.runQuery(internal.semanticSearch.fetchByIds, {
       ids: results.map((r) => r._id),
@@ -1071,10 +1114,12 @@ export const semanticSearchCandidates = action({
 ```
 
 **Notes:**
+
 - Vector search is only available in actions.
 - Vector index dimensions must match the embedding model you choose.
 - Use `fields` to avoid returning large vector fields like embeddings.
-- Set `fields: []` to include no document fields (only `_id` and optional `_score`).
+- Set `fields: []` to include no document fields (only `_id` and optional
+  `_score`).
 
 You can also define a tool entry with the helper:
 
@@ -1112,10 +1157,13 @@ Format as markdown: [Item Name](viewUrl)
 ```
 
 **Before (not actionable):**
+
 > "Found 2 products under $50"
 
 **After (actionable):**
+
 > "Found 2 products under $50:
+>
 > - [Wireless Mouse](/products/abc123) - $29.99
 > - [USB Cable](/products/def456) - $12.99"
 
@@ -1123,8 +1171,8 @@ Format as markdown: [Item Name](viewUrl)
 
 ## Security & Multi-tenant Access
 
-This component is auth-agnostic. You must supply `externalId` from your own
-auth system and never accept it directly from untrusted clients.
+This component is auth-agnostic. You must supply `externalId` from your own auth
+system and never accept it directly from untrusted clients.
 
 Use the scoped endpoints below to enforce ownership checks server-side. These
 throw `Not found` if the conversation or stream is missing or not owned by the
@@ -1177,47 +1225,47 @@ sees them.
 
 ### Component Functions
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `conversations.create` | Mutation | Create a new conversation |
-| `conversations.get` | Query | Get conversation by ID |
-| `conversations.getForExternalId` | Query | Get conversation by ID scoped to externalId |
-| `conversations.list` | Query | List conversations by externalId |
-| `messages.add` | Mutation | Add a message |
-| `messages.list` | Query | List messages in conversation |
-| `messages.listForExternalId` | Query | List messages scoped to externalId |
-| `messages.getLatestForExternalId` | Query | Get latest message scoped to externalId |
-| `stream.create` | Mutation | Create a new stream for delta-based streaming |
-| `stream.addDelta` | Mutation | Add a delta (batch of parts) to a stream |
-| `stream.finish` | Mutation | Mark stream as finished, clean up deltas |
-| `stream.abort` | Mutation | Abort a stream by stream ID |
-| `stream.abortByConversation` | Mutation | Abort a stream by conversation ID |
-| `stream.abortForExternalId` | Mutation | Abort a stream by conversation ID scoped to externalId |
-| `stream.getStream` | Query | Get current stream state for a conversation |
-| `stream.listDeltas` | Query | Get deltas from a cursor position |
-| `stream.getStreamForExternalId` | Query | Get current stream state scoped to externalId |
-| `stream.listDeltasForExternalId` | Query | Get deltas scoped to externalId |
-| `chat.send` | Action | Send a message via OpenRouter |
-| `chat.sendForExternalId` | Action | Send a message scoped to externalId |
+| Function                          | Type     | Description                                            |
+| --------------------------------- | -------- | ------------------------------------------------------ |
+| `conversations.create`            | Mutation | Create a new conversation                              |
+| `conversations.get`               | Query    | Get conversation by ID                                 |
+| `conversations.getForExternalId`  | Query    | Get conversation by ID scoped to externalId            |
+| `conversations.list`              | Query    | List conversations by externalId                       |
+| `messages.add`                    | Mutation | Add a message                                          |
+| `messages.list`                   | Query    | List messages in conversation                          |
+| `messages.listForExternalId`      | Query    | List messages scoped to externalId                     |
+| `messages.getLatestForExternalId` | Query    | Get latest message scoped to externalId                |
+| `stream.create`                   | Mutation | Create a new stream for delta-based streaming          |
+| `stream.addDelta`                 | Mutation | Add a delta (batch of parts) to a stream               |
+| `stream.finish`                   | Mutation | Mark stream as finished, clean up deltas               |
+| `stream.abort`                    | Mutation | Abort a stream by stream ID                            |
+| `stream.abortByConversation`      | Mutation | Abort a stream by conversation ID                      |
+| `stream.abortForExternalId`       | Mutation | Abort a stream by conversation ID scoped to externalId |
+| `stream.getStream`                | Query    | Get current stream state for a conversation            |
+| `stream.listDeltas`               | Query    | Get deltas from a cursor position                      |
+| `stream.getStreamForExternalId`   | Query    | Get current stream state scoped to externalId          |
+| `stream.listDeltasForExternalId`  | Query    | Get deltas scoped to externalId                        |
+| `chat.send`                       | Action   | Send a message via OpenRouter                          |
+| `chat.sendForExternalId`          | Action   | Send a message scoped to externalId                    |
 
 ### React Hooks & Components
 
-| Export | Type | Description |
-|--------|------|-------------|
-| `useDatabaseChat` | Hook | Send messages, track loading/streaming state, abort |
-| `useConversations` | Hook | List/create conversations |
-| `useStreamingContent` | Hook | Subscribe to streaming updates with delta accumulation |
-| `useMessagesWithStreaming` | Hook | Messages + current streaming merged |
-| `useSmoothText` | Hook | Typewriter effect for streaming text |
-| `SmoothText` | Component | Renders text with smooth typewriter effect |
+| Export                     | Type      | Description                                            |
+| -------------------------- | --------- | ------------------------------------------------------ |
+| `useDatabaseChat`          | Hook      | Send messages, track loading/streaming state, abort    |
+| `useConversations`         | Hook      | List/create conversations                              |
+| `useStreamingContent`      | Hook      | Subscribe to streaming updates with delta accumulation |
+| `useMessagesWithStreaming` | Hook      | Messages + current streaming merged                    |
+| `useSmoothText`            | Hook      | Typewriter effect for streaming text                   |
+| `SmoothText`               | Component | Renders text with smooth typewriter effect             |
 
 ### Stream States
 
-| Status | Description |
-|--------|-------------|
-| `streaming` | Stream is active, deltas being written |
-| `finished` | Stream completed successfully |
-| `aborted` | Stream was cancelled (user abort, error, or timeout) |
+| Status      | Description                                          |
+| ----------- | ---------------------------------------------------- |
+| `streaming` | Stream is active, deltas being written               |
+| `finished`  | Stream completed successfully                        |
+| `aborted`   | Stream was cancelled (user abort, error, or timeout) |
 
 ---
 
@@ -1225,7 +1273,8 @@ sees them.
 
 This repo hosts two Railway services, each with its own config file:
 
-- Example app: Root Directory `/example`, Railway Config File `/example/railway.toml`
+- Example app: Root Directory `/example`, Railway Config File
+  `/example/railway.toml`
 - Docs site: Root Directory `/docs`, Railway Config File `/docs/railway.toml`
 
 Note: Railway does not automatically follow the Root Directory when selecting a

@@ -660,6 +660,7 @@ export function defineSemanticSearchTool<
   });
   return defineDatabaseTool({
     ...options,
+    handlerType: options.handlerType ?? "action",
     kind: "semantic_search",
     resultContract: "standard",
     query: true,

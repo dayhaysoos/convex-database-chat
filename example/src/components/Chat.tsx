@@ -30,6 +30,127 @@ interface StreamDelta {
   }>;
 }
 
+interface ToolResultSummary {
+  type: "standard" | "raw" | "error";
+  count?: number;
+  returned?: number;
+  sampled?: boolean;
+  truncated?: boolean;
+  hasMore?: boolean;
+  nextCursor?: string | null;
+  scope?: string;
+  rawShape?: string;
+  error?: string;
+}
+
+const SUGGESTED_PROMPTS = [
+  "How many electronics are under $50?",
+  "Show me 5 electronics under $50.",
+  "Show more.",
+  "Find products for a home office setup.",
+  "Use the legacy raw search tool for sports products.",
+  "What is the inventory overview?",
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function summarizeToolResult(result: string): ToolResultSummary {
+  try {
+    const parsed = JSON.parse(result);
+
+    if (isRecord(parsed) && typeof parsed.error === "string") {
+      return { type: "error", error: parsed.error };
+    }
+
+    if (
+      isRecord(parsed) &&
+      Array.isArray(parsed.data) &&
+      isRecord(parsed.meta)
+    ) {
+      const pagination = isRecord(parsed.meta.pagination)
+        ? parsed.meta.pagination
+        : undefined;
+      const scope = isRecord(parsed.meta.scope)
+        ? [
+            parsed.meta.scope.label,
+            parsed.meta.scope.type,
+            parsed.meta.scope.id,
+          ]
+            .filter((part): part is string => typeof part === "string")
+            .join(" / ")
+        : undefined;
+
+      return {
+        type: "standard",
+        count:
+          typeof parsed.meta.count === "number" ? parsed.meta.count : undefined,
+        returned:
+          typeof parsed.meta.returned === "number"
+            ? parsed.meta.returned
+            : parsed.data.length,
+        sampled:
+          typeof parsed.meta.sampled === "boolean"
+            ? parsed.meta.sampled
+            : undefined,
+        truncated:
+          typeof parsed.meta.truncated === "boolean"
+            ? parsed.meta.truncated
+            : undefined,
+        hasMore:
+          typeof pagination?.hasMore === "boolean"
+            ? pagination.hasMore
+            : undefined,
+        nextCursor:
+          typeof pagination?.nextCursor === "string" ||
+          pagination?.nextCursor === null
+            ? pagination.nextCursor
+            : undefined,
+        scope,
+      };
+    }
+
+    if (Array.isArray(parsed)) {
+      return { type: "raw", returned: parsed.length, rawShape: "array" };
+    }
+
+    return {
+      type: "raw",
+      rawShape: isRecord(parsed) ? "object" : typeof parsed,
+    };
+  } catch {
+    return { type: "raw", rawShape: "unparsed" };
+  }
+}
+
+function ToolResultMetadata({ summary }: { summary: ToolResultSummary }) {
+  if (summary.type === "error") {
+    return <div className="chat-tools-meta error">{summary.error}</div>;
+  }
+
+  const items = [
+    summary.type === "standard" ? "standard" : `raw ${summary.rawShape ?? ""}`,
+    summary.count !== undefined ? `count ${summary.count}` : null,
+    summary.returned !== undefined ? `returned ${summary.returned}` : null,
+    summary.sampled !== undefined ? `sampled ${String(summary.sampled)}` : null,
+    summary.truncated !== undefined
+      ? `truncated ${String(summary.truncated)}`
+      : null,
+    summary.hasMore !== undefined ? `hasMore ${String(summary.hasMore)}` : null,
+    summary.nextCursor ? `next ${summary.nextCursor}` : null,
+    summary.scope ? `scope ${summary.scope}` : null,
+  ].filter((item): item is string => Boolean(item));
+
+  return (
+    <div className="chat-tools-meta">
+      {items.map((item) => (
+        <span key={item}>{item}</span>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Parse markdown-style links and bold text for rendering
  */
@@ -84,7 +205,7 @@ function useDeltaStreaming(conversationId: string | null) {
   // Subscribe to stream state
   const streamState = useQuery(
     api.chat.getStreamState,
-    conversationId ? { conversationId } : "skip"
+    conversationId ? { conversationId } : "skip",
   ) as StreamState | null | undefined;
 
   const streamId = streamState?.streamId ?? null;
@@ -103,7 +224,7 @@ function useDeltaStreaming(conversationId: string | null) {
   // Fetch deltas from cursor position
   const deltas = useQuery(
     api.chat.getStreamDeltas,
-    streamId && status === "streaming" ? { streamId, cursor } : "skip"
+    streamId && status === "streaming" ? { streamId, cursor } : "skip",
   ) as StreamDelta[] | undefined;
 
   // Accumulate new deltas with deduplication
@@ -114,7 +235,7 @@ function useDeltaStreaming(conversationId: string | null) {
 
     // Filter out already-processed deltas to prevent duplicates
     const newDeltas = deltas.filter(
-      (d) => d.start >= lastProcessedEndRef.current
+      (d) => d.start >= lastProcessedEndRef.current,
     );
 
     if (newDeltas.length === 0) {
@@ -169,7 +290,7 @@ export function Chat() {
   const [error, setError] = useState<string | null>(null);
   const [showTools, setShowTools] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
+
   // Track if current request was aborted to ignore its completion
   const wasAbortedRef = useRef(false);
 
@@ -192,14 +313,19 @@ export function Chat() {
 
   const messages = useQuery(
     api.chat.getMessages,
-    conversationId ? { conversationId } : "skip"
+    conversationId ? { conversationId } : "skip",
   ) as Message[] | undefined;
 
-  const toolResultIds = new Set(
-    (messages ?? []).flatMap((msg) =>
-      msg.toolResults ? msg.toolResults.map((result) => result.toolCallId) : []
-    )
-  );
+  const toolResultSummaries = new Map<string, ToolResultSummary>();
+  for (const msg of messages ?? []) {
+    for (const result of msg.toolResults ?? []) {
+      toolResultSummaries.set(
+        result.toolCallId,
+        summarizeToolResult(result.result),
+      );
+    }
+  }
+  const toolResultIds = new Set(toolResultSummaries.keys());
 
   const toolCalls = (messages ?? []).flatMap((msg) =>
     msg.toolCalls
@@ -208,12 +334,13 @@ export function Chat() {
           name: call.name,
           args: call.arguments,
           createdAt: msg.createdAt,
+          result: toolResultSummaries.get(call.id),
         }))
-      : []
+      : [],
   );
 
   const displayMessages = (messages ?? []).filter(
-    (msg) => msg.role !== "tool" && !msg.toolCalls
+    (msg) => msg.role !== "tool" && !msg.toolCalls,
   );
 
   // Use delta-based streaming for efficient O(n) bandwidth
@@ -227,12 +354,11 @@ export function Chat() {
     maxDelayMs: 60,
   });
 
-
   // Create conversation on mount
   useEffect(() => {
     if (!conversationId) {
       createConversation({ externalId: "demo-user", title: "Demo Chat" }).then(
-        setConversationId
+        setConversationId,
       );
     }
   }, [conversationId, createConversation]);
@@ -249,7 +375,7 @@ export function Chat() {
     // Quick client-side check (server also enforces)
     if (!canSendMessage()) {
       setError(
-        `Rate limit reached. Resets in ${getResetTimeDisplay()}. This is a demo with limited usage.`
+        `Rate limit reached. Resets in ${getResetTimeDisplay()}. This is a demo with limited usage.`,
       );
       return;
     }
@@ -267,12 +393,12 @@ export function Chat() {
         message,
         fingerprint: fingerprint ?? undefined,
       });
-      
+
       // Ignore result if request was aborted
       if (wasAbortedRef.current) {
         return;
       }
-      
+
       if (!result.success) {
         // Don't show "Stream aborted" as an error - it's expected when user stops
         if (!result.error?.includes("aborted")) {
@@ -287,7 +413,8 @@ export function Chat() {
       if (wasAbortedRef.current) {
         return;
       }
-      const errorMessage = err instanceof Error ? err.message : "Failed to send message";
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to send message";
       // Don't show abort-related errors
       if (!errorMessage.toLowerCase().includes("abort")) {
         setError(errorMessage);
@@ -302,13 +429,13 @@ export function Chat() {
 
   const handleAbort = async () => {
     if (!conversationId || isStopping) return;
-    
+
     // Mark as aborted so handleSubmit ignores the result
     wasAbortedRef.current = true;
-    
+
     // Immediate feedback
     setIsStopping(true);
-    
+
     try {
       await abortStreamMutation({ conversationId, reason: "User cancelled" });
     } catch (err) {
@@ -350,9 +477,7 @@ export function Chat() {
                 </span>
               )}
               {isLocalDev && (
-                <span className="rate-limit-badge dev-mode">
-                  Dev Mode
-                </span>
+                <span className="rate-limit-badge dev-mode">Dev Mode</span>
               )}
             </div>
             <div className="chat-header-right">
@@ -387,8 +512,8 @@ export function Chat() {
               </div>
               {toolCalls.length === 0 ? (
                 <div className="chat-tools-empty">
-                  No tool calls yet. Ask a conceptual question to trigger
-                  semantic search.
+                  No tool calls yet. Ask about counts, lists, semantic search,
+                  or legacy raw tools.
                 </div>
               ) : (
                 <ul className="chat-tools-list">
@@ -410,6 +535,9 @@ export function Chat() {
                             ? `${call.args.slice(0, 140)}...`
                             : call.args}
                         </code>
+                        {call.result && (
+                          <ToolResultMetadata summary={call.result} />
+                        )}
                       </li>
                     ))}
                 </ul>
@@ -423,10 +551,16 @@ export function Chat() {
                 <h3>Welcome! 👋</h3>
                 <p>Ask me about the products in the database:</p>
                 <ul>
-                  <li>"Show me electronics under $50"</li>
-                  <li>"What products are low on stock?"</li>
-                  <li>"Give me an inventory overview"</li>
-                  <li>"Find running shoes"</li>
+                  {SUGGESTED_PROMPTS.map((prompt) => (
+                    <li key={prompt}>
+                      <button
+                        type="button"
+                        onClick={() => setInputValue(prompt)}
+                      >
+                        "{prompt}"
+                      </button>
+                    </li>
+                  ))}
                 </ul>
                 {isRateLimited && (
                   <div className="rate-limit-warning">
@@ -496,7 +630,9 @@ export function Chat() {
                   ? `Rate limit reached. Resets in ${getResetTimeDisplay()}`
                   : "Ask about products..."
               }
-              disabled={isLoading || isStreaming || !conversationId || isRateLimited}
+              disabled={
+                isLoading || isStreaming || !conversationId || isRateLimited
+              }
               className="chat-input"
             />
             {isLoading || isStreaming || isStopping ? (
@@ -513,9 +649,7 @@ export function Chat() {
               <button
                 type="submit"
                 disabled={
-                  !inputValue.trim() ||
-                  !conversationId ||
-                  isRateLimited
+                  !inputValue.trim() || !conversationId || isRateLimited
                 }
                 className="chat-submit"
               >

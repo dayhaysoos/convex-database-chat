@@ -17,6 +17,7 @@ export default defineSchema({
     .vectorIndex("by_description_embedding", {
       vectorField: "embedding",
       dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+      filterFields: ["category"],
     }),
 
   rateLimits: defineTable({

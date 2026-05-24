@@ -334,6 +334,7 @@ describe("tools", () => {
         kind: "semantic_search",
         resultContract: "standard",
       });
+      expect(tool.handlerType).toBe("action");
       expect(tool.parameters.required).toEqual(["query"]);
       expect(tool.parameters.properties.query).toMatchObject({
         type: "string",
@@ -351,6 +352,17 @@ describe("tools", () => {
       expect(tool.parameters.properties.limit.description).toContain(
         "default: 10, max: 50"
       );
+    });
+
+    it("allows semantic search tools to override the default action handler type", () => {
+      const tool = defineSemanticSearchTool({
+        name: "semanticSearchFromMaterializedIndex",
+        description: "Find records from a materialized semantic index.",
+        handler: "handler_string",
+        handlerType: "query",
+      });
+
+      expect(tool.handlerType).toBe("query");
     });
   });
 });
