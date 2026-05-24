@@ -4,6 +4,7 @@ import { convexTest } from "convex-test";
 import schema from "./schema";
 import { api } from "./_generated/api";
 import { DatabaseChatClient, defineDatabaseChat } from "./client";
+import { definePaginatedListTool } from "./tools";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -25,6 +26,47 @@ describe("DatabaseChatClient", () => {
     it("should work with default config", () => {
       const client = defineDatabaseChat(api);
       expect(client).toBeInstanceOf(DatabaseChatClient);
+    });
+
+    it("builds system prompts with automatic tool reliability guidance by default", () => {
+      const listTool = definePaginatedListTool({
+        name: "listRecords",
+        description: "List records.",
+        handler: "handler_string",
+      });
+
+      const automatic = defineDatabaseChat(api, {
+        systemPrompt: "Base prompt.",
+        tools: [listTool],
+      });
+
+      expect(automatic.getSystemPromptWithTools()).toContain(
+        "Tool result reliability:"
+      );
+      expect(automatic.getSystemPromptWithTools()).toContain(
+        "meta.pagination.nextCursor"
+      );
+
+      const disabled = defineDatabaseChat(api, {
+        systemPrompt: "Base prompt.",
+        tools: [listTool],
+        toolGuidance: "disabled",
+      });
+      expect(disabled.getSystemPromptWithTools()).not.toContain(
+        "Tool result reliability:"
+      );
+
+      const custom = defineDatabaseChat(api, {
+        systemPrompt: "Base prompt.",
+        tools: [listTool],
+        toolGuidance: "Always mention exact scope labels.",
+      });
+      expect(custom.getSystemPromptWithTools()).toContain(
+        "Always mention exact scope labels."
+      );
+      expect(custom.getSystemPromptWithTools()).not.toContain(
+        "Tool result reliability:"
+      );
     });
   });
 

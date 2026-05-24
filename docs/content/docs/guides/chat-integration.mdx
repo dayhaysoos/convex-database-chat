@@ -12,11 +12,34 @@ delta-based streaming, and message persistence.
 // convex/chat.ts
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import { components } from "./_generated/api";
+import { createFunctionHandle } from "convex/server";
+import { api, components } from "./_generated/api";
+import {
+  definePaginatedListTool,
+  injectedString,
+} from "@dayhaysoos/convex-database-chat/tools";
+
+async function getTools() {
+  return [
+    definePaginatedListTool({
+      name: "listProducts",
+      description: "List products with deterministic cursor pagination.",
+      handler: await createFunctionHandle(api.chatTools.listProducts),
+      injectedArgs: {
+        orgId: injectedString({
+          description: "Current organization id injected by the app.",
+        }),
+      },
+      pagination: { defaultLimit: 20, maxLimit: 100 },
+    }),
+  ];
+}
 
 export const sendMessage = action({
   args: { conversationId: v.string(), message: v.string() },
   handler: async (ctx, args) => {
+    const tools = await getTools();
+
     return await ctx.runAction(components.databaseChat.chat.send, {
       conversationId: args.conversationId as any,
       message: args.message,
@@ -24,7 +47,7 @@ export const sendMessage = action({
         apiKey: process.env.OPENROUTER_API_KEY!,
         model: "openai/gpt-4o",
         systemPrompt: "You are a helpful assistant.",
-        tools: [],
+        tools,
         maxMessagesForLLM: 50,
         toolContext: { orgId: "org_123" },
       },
@@ -39,8 +62,58 @@ export const sendMessage = action({
 - `model` (optional): defaults to `openai/gpt-4o`.
 - `systemPrompt` (optional): falls back to the component default if omitted.
 - `tools` (optional): array of `DatabaseChatTool`.
+- `toolGuidance` (optional): `"auto"` by default for standard tool-result
+  guidance.
 - `maxMessagesForLLM` (optional): defaults to 50.
 - `toolContext` (optional): server-only context merged into tool args.
+
+`createFunctionHandle` is async, so build tools inside the action handler or in
+a helper called from the handler. Do not call it at module scope.
+
+## Tool guidance
+
+`toolGuidance` controls the reliability instructions the component adds to the
+system prompt after it lists the available tools. These instructions tell the
+LLM how to interpret tool results: use count tools for factual totals, continue
+paginated lists with `nextCursor`, and do not treat semantic top-K result length
+as an exact count.
+
+The default is `"auto"`. In auto mode, the component reads each tool's
+`metadata.kind` and emits guidance for the result categories present in the
+current tool set. Typed builders such as `defineCountTool`,
+`definePaginatedListTool`, and `defineSemanticSearchTool` set this metadata for
+you.
+
+```ts
+config: {
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  tools,
+  toolGuidance: "auto",
+}
+```
+
+You can disable the generated guidance when your system prompt already covers
+tool behavior:
+
+```ts
+config: {
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  tools,
+  toolGuidance: "disabled",
+}
+```
+
+You can also pass a custom string. A custom string replaces the generated
+reliability guidance but is still appended after the tool list.
+
+```ts
+config: {
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  tools,
+  toolGuidance:
+    "Use product count tools for exact totals. Use list cursors for follow-up pages.",
+}
+```
 
 ## External ID scoping
 
@@ -60,6 +133,6 @@ throws `Not found` to avoid leaking existence across tenants.
 
 ## Client wrapper alternative
 
-The `defineDatabaseChat` client (see [Client Wrapper](/docs/reference/client-wrapper))
-wraps the same actions and helps you pass tools and system prompts once instead
-of per call.
+The `defineDatabaseChat` client (see
+[Client Wrapper](/docs/reference/client-wrapper)) wraps the same actions and
+helps you pass tools and system prompts once instead of per call.

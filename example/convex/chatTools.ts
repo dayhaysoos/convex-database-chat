@@ -6,6 +6,7 @@ import {
   formatVectorResults,
   generateEmbedding,
 } from "@dayhaysoos/convex-database-chat/vector";
+import type { DatabaseChatToolResult } from "@dayhaysoos/convex-database-chat/resultContract";
 
 type ProductSummary = {
   _id: Id<"products">;
@@ -16,14 +17,193 @@ type ProductSummary = {
   stock: number;
 };
 
-type ProductSearchResult = ProductSummary & {
+type ProductSearchResult = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  stock: number;
+  inStock: boolean;
+  viewUrl: string;
+  score?: number;
+};
+
+type LegacyVectorProductResult = ProductSummary & {
+  id: string;
   inStock: boolean;
   viewUrl: string;
 };
 
+type ProductFilters = {
+  searchQuery?: string;
+  category?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  inStockOnly?: boolean;
+};
+
+const DEFAULT_STORE_ID = "demo-store";
+const DEFAULT_STORE_LABEL = "Demo Store";
+const DEFAULT_LIST_LIMIT = 5;
+const MAX_LIST_LIMIT = 20;
+const DEFAULT_SEMANTIC_LIMIT = 5;
+const MAX_SEMANTIC_LIMIT = 12;
+
+const productRowValidator = v.object({
+  id: v.string(),
+  name: v.string(),
+  description: v.string(),
+  category: v.string(),
+  price: v.number(),
+  stock: v.number(),
+  inStock: v.boolean(),
+  viewUrl: v.string(),
+  score: v.optional(v.number()),
+});
+
+const resultMetaValidator = v.object({
+  scope: v.object({
+    type: v.string(),
+    id: v.optional(v.string()),
+    label: v.optional(v.string()),
+  }),
+  appliedFilters: v.optional(v.any()),
+  count: v.optional(v.number()),
+  returned: v.number(),
+  exhaustive: v.boolean(),
+  truncated: v.boolean(),
+  truncationReason: v.optional(v.string()),
+  sampled: v.boolean(),
+  sampleMethod: v.optional(v.string()),
+  pagination: v.optional(
+    v.object({
+      cursor: v.optional(v.union(v.string(), v.null())),
+      hasMore: v.boolean(),
+      nextCursor: v.optional(v.union(v.string(), v.null())),
+      pageSize: v.optional(v.number()),
+    }),
+  ),
+});
+
+const productResultContractValidator = v.object({
+  data: v.array(productRowValidator),
+  meta: resultMetaValidator,
+});
+
+const productFiltersValidator = v.object({
+  searchQuery: v.optional(v.string()),
+  category: v.optional(v.string()),
+  minPrice: v.optional(v.number()),
+  maxPrice: v.optional(v.number()),
+  inStockOnly: v.optional(v.boolean()),
+});
+
+function normalizeFilters(filters: ProductFilters = {}): ProductFilters {
+  const normalized: ProductFilters = {};
+
+  if (filters.searchQuery?.trim()) {
+    normalized.searchQuery = filters.searchQuery.trim();
+  }
+  if (filters.category?.trim()) {
+    normalized.category = filters.category.trim().toLowerCase();
+  }
+  if (filters.minPrice !== undefined) {
+    normalized.minPrice = filters.minPrice;
+  }
+  if (filters.maxPrice !== undefined) {
+    normalized.maxPrice = filters.maxPrice;
+  }
+  if (filters.inStockOnly !== undefined) {
+    normalized.inStockOnly = filters.inStockOnly;
+  }
+
+  return normalized;
+}
+
+function applyProductFilters<T extends ProductSummary>(
+  products: T[],
+  filters: ProductFilters,
+): T[] {
+  let filtered = products;
+
+  if (filters.category) {
+    filtered = filtered.filter(
+      (product) => product.category.toLowerCase() === filters.category,
+    );
+  }
+
+  if (filters.minPrice !== undefined) {
+    filtered = filtered.filter((product) => product.price >= filters.minPrice!);
+  }
+
+  if (filters.maxPrice !== undefined) {
+    filtered = filtered.filter((product) => product.price <= filters.maxPrice!);
+  }
+
+  if (filters.inStockOnly) {
+    filtered = filtered.filter((product) => product.stock > 0);
+  }
+
+  if (filters.searchQuery) {
+    const query = filters.searchQuery.toLowerCase();
+    filtered = filtered.filter(
+      (product) =>
+        product.name.toLowerCase().includes(query) ||
+        product.description.toLowerCase().includes(query),
+    );
+  }
+
+  return filtered;
+}
+
+function productToResultRow(
+  product: ProductSummary,
+  score?: number,
+): ProductSearchResult {
+  const row: ProductSearchResult = {
+    id: product._id,
+    name: product.name,
+    description: product.description,
+    category: product.category,
+    price: product.price,
+    stock: product.stock,
+    inStock: product.stock > 0,
+    viewUrl: `/products/${product._id}`,
+  };
+  if (score !== undefined) {
+    row.score = score;
+  }
+  return row;
+}
+
+function clampLimit(
+  requestedLimit: number | undefined,
+  defaultLimit: number,
+  maxLimit: number,
+): number {
+  return Math.max(1, Math.min(requestedLimit ?? defaultLimit, maxLimit));
+}
+
+function parseCursor(cursor: string | undefined): number {
+  if (!cursor) {
+    return 0;
+  }
+  const parsed = Number.parseInt(cursor, 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function scopeForStore(storeId: string | undefined) {
+  return {
+    type: "store",
+    id: storeId ?? DEFAULT_STORE_ID,
+    label: DEFAULT_STORE_LABEL,
+  };
+}
+
 /**
- * Search products by various filters.
- * Used by the LLM to find products matching user queries.
+ * Legacy raw product search with top-level arguments.
+ * Kept in the example to verify backwards-compatible raw tool behavior.
  */
 export const searchProducts = query({
   args: {
@@ -33,6 +213,7 @@ export const searchProducts = query({
     maxPrice: v.optional(v.number()),
     inStockOnly: v.optional(v.boolean()),
     limit: v.optional(v.number()),
+    storeId: v.optional(v.string()),
   },
   returns: v.array(
     v.object({
@@ -47,48 +228,91 @@ export const searchProducts = query({
     }),
   ),
   handler: async (ctx, args) => {
-    const limit = Math.min(args.limit ?? 20, 50);
-    let products = await ctx.db.query("products").collect();
+    const limit = clampLimit(args.limit, 20, 50);
+    const products = await ctx.db.query("products").collect();
+    const filters = normalizeFilters(args);
+    return applyProductFilters(products, filters)
+      .slice(0, limit)
+      .map((product) => productToResultRow(product));
+  },
+});
 
-    // Filter by category
-    if (args.category) {
-      const cat = args.category.toLowerCase();
-      products = products.filter((p) => p.category.toLowerCase() === cat);
-    }
+/**
+ * Exact count tool using the standard DatabaseChat result contract.
+ */
+export const countProducts = query({
+  args: {
+    filters: v.optional(productFiltersValidator),
+    storeId: v.string(),
+  },
+  returns: productResultContractValidator,
+  handler: async (
+    ctx,
+    args,
+  ): Promise<DatabaseChatToolResult<ProductSearchResult>> => {
+    const products = await ctx.db.query("products").collect();
+    const filters = normalizeFilters(args.filters);
+    const count = applyProductFilters(products, filters).length;
 
-    // Filter by price range
-    if (args.minPrice !== undefined) {
-      products = products.filter((p) => p.price >= args.minPrice!);
-    }
-    if (args.maxPrice !== undefined) {
-      products = products.filter((p) => p.price <= args.maxPrice!);
-    }
+    return {
+      data: [],
+      meta: {
+        scope: scopeForStore(args.storeId),
+        appliedFilters: filters,
+        count,
+        returned: 0,
+        exhaustive: true,
+        truncated: false,
+        sampled: false,
+      },
+    };
+  },
+});
 
-    // Filter by stock
-    if (args.inStockOnly) {
-      products = products.filter((p) => p.stock > 0);
-    }
+/**
+ * Deterministic cursor-paginated list using the standard result contract.
+ */
+export const listProducts = query({
+  args: {
+    filters: v.optional(productFiltersValidator),
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+    storeId: v.string(),
+  },
+  returns: productResultContractValidator,
+  handler: async (
+    ctx,
+    args,
+  ): Promise<DatabaseChatToolResult<ProductSearchResult>> => {
+    const products = await ctx.db.query("products").collect();
+    const filters = normalizeFilters(args.filters);
+    const matchingProducts = applyProductFilters(products, filters);
+    const offset = parseCursor(args.cursor);
+    const limit = clampLimit(args.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+    const page = matchingProducts.slice(offset, offset + limit);
+    const returned = page.length;
+    const nextOffset = offset + returned;
+    const hasMore = nextOffset < matchingProducts.length;
 
-    // Filter by search query (name or description)
-    if (args.searchQuery) {
-      const q = args.searchQuery.toLowerCase();
-      products = products.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q),
-      );
-    }
-
-    return products.slice(0, limit).map((p) => ({
-      id: p._id,
-      name: p.name,
-      description: p.description,
-      category: p.category,
-      price: p.price,
-      stock: p.stock,
-      inStock: p.stock > 0,
-      viewUrl: `/products/${p._id}`,
-    }));
+    return {
+      data: page.map((product) => productToResultRow(product)),
+      meta: {
+        scope: scopeForStore(args.storeId),
+        appliedFilters: filters,
+        count: matchingProducts.length,
+        returned,
+        exhaustive: !hasMore,
+        truncated: hasMore,
+        ...(hasMore ? { truncationReason: "row_limit" } : {}),
+        sampled: false,
+        pagination: {
+          cursor: args.cursor ?? null,
+          hasMore,
+          nextCursor: hasMore ? String(nextOffset) : null,
+          pageSize: limit,
+        },
+      },
+    };
   },
 });
 
@@ -100,6 +324,7 @@ export const semanticSearchProducts = action({
   args: {
     query: v.string(),
     limit: v.optional(v.number()),
+    storeId: v.optional(v.string()),
   },
   returns: v.array(
     v.object({
@@ -139,8 +364,9 @@ export const semanticSearchProducts = action({
       ids: results.map((result) => result._id),
     })) as ProductSummary[];
 
-    const docsWithUrls: ProductSearchResult[] = docs.map((doc) => ({
+    const docsWithUrls: LegacyVectorProductResult[] = docs.map((doc) => ({
       ...doc,
+      id: doc._id,
       inStock: doc.stock > 0,
       viewUrl: `/products/${doc._id}`,
     }));
@@ -156,7 +382,7 @@ export const semanticSearchProducts = action({
     ] as const;
 
     return formatVectorResults<
-      ProductSearchResult,
+      LegacyVectorProductResult,
       Id<"products">,
       typeof fields
     >(results, docsWithUrls, {
@@ -167,11 +393,95 @@ export const semanticSearchProducts = action({
 });
 
 /**
+ * Semantic search using the standard result contract.
+ * This path exercises sampled top-K metadata and automatic prompt guidance.
+ */
+export const semanticSearchProductsStandard = action({
+  args: {
+    query: v.string(),
+    filters: v.optional(
+      v.object({
+        category: v.optional(v.string()),
+        inStockOnly: v.optional(v.boolean()),
+      }),
+    ),
+    limit: v.optional(v.number()),
+    storeId: v.string(),
+  },
+  returns: productResultContractValidator,
+  handler: async (
+    ctx,
+    args,
+  ): Promise<DatabaseChatToolResult<ProductSearchResult>> => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENROUTER_API_KEY not configured");
+    }
+
+    const embedding = await generateEmbedding({
+      apiKey,
+      text: args.query,
+    });
+
+    const limit = clampLimit(
+      args.limit,
+      DEFAULT_SEMANTIC_LIMIT,
+      MAX_SEMANTIC_LIMIT,
+    );
+    const filters = normalizeFilters(args.filters);
+    const vectorLimit = filters.inStockOnly ? Math.min(limit * 4, 256) : limit;
+    const results = await ctx.vectorSearch(
+      "products",
+      "by_description_embedding",
+      {
+        vector: embedding,
+        limit: vectorLimit,
+        ...(filters.category
+          ? { filter: (q) => q.eq("category", filters.category!) }
+          : {}),
+      },
+    );
+
+    const chatToolsApi = api.chatTools as any;
+    const docs = (await ctx.runQuery(chatToolsApi.fetchProductsByIds, {
+      ids: results.map((result) => result._id),
+    })) as ProductSummary[];
+    const scoresById = new Map(
+      results.map((result) => [result._id, result._score]),
+    );
+    const data = applyProductFilters(docs, filters)
+      .slice(0, limit)
+      .map((product) =>
+        productToResultRow(product, scoresById.get(product._id)),
+      );
+
+    return {
+      data,
+      meta: {
+        scope: scopeForStore(args.storeId),
+        appliedFilters: {
+          query: args.query,
+          ...filters,
+        },
+        returned: data.length,
+        exhaustive: false,
+        truncated: true,
+        truncationReason: "semantic_top_k_limit",
+        sampled: true,
+        sampleMethod: "semantic_top_k",
+      },
+    };
+  },
+});
+
+/**
  * Get overall product statistics.
  * Useful for inventory overview questions.
  */
 export const getProductStats = query({
-  args: {},
+  args: {
+    storeId: v.optional(v.string()),
+  },
   returns: v.object({
     totalProducts: v.number(),
     totalValue: v.number(),
@@ -249,6 +559,7 @@ export const getProductStats = query({
 export const getLowStockProducts = query({
   args: {
     threshold: v.optional(v.number()),
+    storeId: v.optional(v.string()),
   },
   returns: v.array(
     v.object({

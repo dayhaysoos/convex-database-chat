@@ -41,13 +41,26 @@ import { defineVectorSearchTool } from "@dayhaysoos/convex-database-chat/vector"
 import { createFunctionHandle } from "convex/server";
 import { api } from "./_generated/api";
 
-const tools = [
-  defineVectorSearchTool({
-    name: "semanticSearch",
-    description: "Find candidates by meaning or concept",
-    handler: createFunctionHandle(api.chatTools.semanticSearchCandidates),
-  }),
-];
+async function getTools() {
+  return [
+    defineVectorSearchTool({
+      name: "semanticSearch",
+      description: "Find candidates by meaning or concept",
+      handler: await createFunctionHandle(
+        api.chatTools.semanticSearchCandidates,
+      ),
+    }),
+  ];
+}
 ```
 
-`defineVectorSearchTool` sets `handlerType` to `"action"` automatically.
+`defineVectorSearchTool` sets `handlerType` to `"action"` and `metadata.kind` to
+`"semantic_search"` automatically. It does not set `metadata.resultContract`
+because `formatVectorResults` returns an array, not the standard
+`{ data, meta }` result envelope.
+
+If you want semantic search to participate in the standard result contract and
+automatic reliability guidance, use `defineSemanticSearchTool` from
+`@dayhaysoos/convex-database-chat/tools` instead. That builder also defaults to
+`handlerType: "action"`, but expects your handler to return `{ data, meta }`
+with `meta.sampled: true` and `meta.exhaustive: false`.

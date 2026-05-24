@@ -4,8 +4,8 @@ description: Define what the LLM can query.
 ---
 
 Tools describe the queries and actions your assistant can call. Each tool
-declares a name, description, JSON schema for parameters, and a handler
-string created with `createFunctionHandle`.
+declares a name, description, JSON schema for parameters, and a handler string
+created with `createFunctionHandle`.
 
 ## Tool shape
 
@@ -28,11 +28,46 @@ interface DatabaseChatTool {
   };
   handlerType?: "query" | "mutation" | "action";
   handler: string;
+  metadata?: {
+    kind: "count" | "paginated_list" | "semantic_search" | "detail" | "unknown";
+    resultContract?: "standard";
+  };
 }
 ```
 
-`handlerType` defaults to `"query"`. Use `"action"` for tools that call
-`ctx.vectorSearch` or external APIs.
+Raw tools default `handlerType` to `"query"`. Use `"action"` for tools that call
+`ctx.vectorSearch` or external APIs. The typed semantic builder defaults to
+`"action"` because semantic search commonly uses Convex actions.
+
+## Tool metadata
+
+`metadata` tells the component what kind of result a tool returns. It is not a
+model-visible argument and it is not app domain data. For example, do not use
+`kind` for values like `"product"` or `"candidate"`. Use it to describe the
+tool's result semantics.
+
+Typed standard-result builders set metadata automatically. If you define raw
+tools by hand, add metadata when the component should be able to generate better
+tool guidance. If metadata is omitted, the tool is treated as `"unknown"`.
+
+| Field                     | Meaning                                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `metadata.kind`           | The result category the component uses for prompt guidance and tool reliability semantics.      |
+| `metadata.resultContract` | Set to `"standard"` only when the handler returns `{ data, meta }` as `DatabaseChatToolResult`. |
+
+Supported `kind` values:
+
+| Kind                | Use for                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `"count"`           | Exact total/count tools. The authoritative answer is usually `meta.count`.                 |
+| `"paginated_list"`  | Deterministic list tools that may return one cursor page at a time.                        |
+| `"semantic_search"` | Top-K relevance tools. Results are sampled and should not be interpreted as exact totals.  |
+| `"detail"`          | One-record detail lookups. This is useful for classifying exact detail fetches.            |
+| `"unknown"`         | Raw or app-specific tools where the component should not assume count or pagination rules. |
+
+Use `metadata.resultContract: "standard"` only for handlers that return the
+standard result contract described below. Do not set it for legacy raw arrays,
+raw objects, or vector helpers that return a plain array.
 
 ## Explicit tool example
 
@@ -41,27 +76,32 @@ import { createFunctionHandle } from "convex/server";
 import { api } from "./_generated/api";
 import type { DatabaseChatTool } from "./components/databaseChat/tools";
 
-const tools: DatabaseChatTool[] = [
-  {
-    name: "searchProducts",
-    description: "Search products by name, category, or price range",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search text" },
-        category: {
-          type: "string",
-          enum: ["electronics", "clothing", "home", "sports"],
+async function getTools(): Promise<DatabaseChatTool[]> {
+  return [
+    {
+      name: "searchProducts",
+      description: "Search products by name, category, or price range",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search text" },
+          category: {
+            type: "string",
+            enum: ["electronics", "clothing", "home", "sports"],
+          },
+          minPrice: { type: "number" },
+          maxPrice: { type: "number" },
+          limit: { type: "number" },
         },
-        minPrice: { type: "number" },
-        maxPrice: { type: "number" },
-        limit: { type: "number" },
       },
+      handler: await createFunctionHandle(api.chatTools.searchProducts),
     },
-    handler: createFunctionHandle(api.chatTools.searchProducts),
-  },
-];
+  ];
+}
 ```
+
+`createFunctionHandle` is asynchronous and should be called inside a Convex
+function, usually from a small `getTools()` helper used by your chat action.
 
 ## Built-in helpers
 
@@ -74,13 +114,150 @@ If you want generic tools, the component includes helpers:
 
 Each helper returns a `DatabaseChatTool` and still requires a handler string.
 
+## Typed standard-result tools
+
+For tools that return the standard result contract, prefer the split builders.
+They generate the same `DatabaseChatTool` shape, attach reliability metadata,
+and keep model-visible filters nested under `filters`.
+
+```ts
+import {
+  defineCountTool,
+  definePaginatedListTool,
+  defineSemanticSearchTool,
+  enumFilter,
+  injectedString,
+  numberFilter,
+  stringFilter,
+  type InferToolHandlerArgs,
+  type InferToolResult,
+} from "@dayhaysoos/convex-database-chat/tools";
+import type { DatabaseChatToolResult } from "@dayhaysoos/convex-database-chat/resultContract";
+
+type ProductRow = {
+  id: string;
+  name: string;
+  price: number;
+  viewUrl: string;
+};
+
+export const listProductsTool = definePaginatedListTool<ProductRow>({
+  name: "listProducts",
+  description: "List products matching deterministic filters.",
+  handler: "handler_string",
+  filters: {
+    category: enumFilter({
+      values: ["electronics", "clothing", "home", "sports"] as const,
+      description: "Product category.",
+    }),
+    minPrice: numberFilter({ min: 0 }),
+    searchQuery: stringFilter(),
+  },
+  injectedArgs: {
+    tenantId: injectedString(),
+  },
+  pagination: {
+    defaultLimit: 20,
+    maxLimit: 100,
+  },
+});
+
+type HandlerArgs = InferToolHandlerArgs<typeof listProductsTool>;
+type HandlerResult = InferToolResult<typeof listProductsTool>;
+// HandlerResult is DatabaseChatToolResult<ProductRow>.
+```
+
+The LLM sees `filters`, `limit`, and `cursor`. It does not see injected args
+such as `tenantId`; those still appear in handler arg inference and can be
+merged from `toolContext`.
+
+Builder defaults:
+
+- `defineCountTool`: exact totals, no `limit`.
+- `definePaginatedListTool`: deterministic cursor pages, default limit 20,
+  max 100.
+- `defineSemanticSearchTool`: sampled top-K relevance results, default limit 10,
+  max 50, and `handlerType: "action"` unless explicitly overridden.
+
+## Standard result contract
+
+Handlers for standard-result tools should return:
+
+```ts
+const result: DatabaseChatToolResult<ProductRow> = {
+  data: rows,
+  meta: {
+    scope: { type: "workspace", id: workspaceId },
+    appliedFilters: normalizedFilters,
+    count: exactCount,
+    returned: rows.length,
+    exhaustive: false,
+    truncated: true,
+    truncationReason: "row_limit",
+    sampled: false,
+    pagination: {
+      cursor,
+      hasMore: nextCursor !== null,
+      nextCursor,
+      pageSize: limit,
+    },
+  },
+};
+```
+
+Use `validateToolResultContract(result)` in tests or development checks when you
+want structured errors for contract invariants such as
+`meta.returned === data.length`.
+
+### Pagination semantics
+
+For deterministic lists, `meta.count` is the total number of matching rows and
+`meta.returned` is the number returned in this page. If
+`meta.pagination.hasMore` is true, pass `meta.pagination.nextCursor` back as the
+next call's `cursor`.
+
+For example, a first page can return:
+
+```json
+{
+  "data": [{ "id": "1", "name": "USB-C Hub" }],
+  "meta": {
+    "count": 30,
+    "returned": 1,
+    "exhaustive": false,
+    "truncated": true,
+    "sampled": false,
+    "pagination": {
+      "cursor": null,
+      "hasMore": true,
+      "nextCursor": "1",
+      "pageSize": 1
+    }
+  }
+}
+```
+
+An immediate "show more" follow-up should call the same list tool with the same
+`filters` and `cursor: "1"`. The final page should return `hasMore: false`.
+
+### Semantic search semantics
+
+Semantic search tools should set `meta.sampled: true`, `meta.exhaustive: false`,
+and a `sampleMethod` such as `"semantic_top_k"`. A semantic result's
+`data.length` is the number of top-K results returned, not an exact count of all
+possible matches. Use a count tool for factual totals.
+
 ## Auto-generated tools
 
-You can generate tools from schema-like definitions with `generateToolsFromSchema`.
+You can generate tools from schema-like definitions with
+`generateToolsFromSchema`.
 
 ```ts
 import { createFunctionHandle } from "convex/server";
-import { defineTable, generateToolsFromSchema } from "./components/databaseChat/schemaTools";
+import {
+  defineTable,
+  generateToolsFromSchema,
+} from "./components/databaseChat/schemaTools";
 import { api } from "./_generated/api";
 
 const tables = [
@@ -91,15 +268,17 @@ const tables = [
   ]),
 ];
 
-const tools = generateToolsFromSchema({
-  tables,
-  allowedTables: ["products"],
-  handlers: {
-    query: createFunctionHandle(api.chatTools.queryTable),
-    count: createFunctionHandle(api.chatTools.countRecords),
-    aggregate: createFunctionHandle(api.chatTools.aggregate),
-  },
-});
+async function getSchemaTools() {
+  return generateToolsFromSchema({
+    tables,
+    allowedTables: ["products"],
+    handlers: {
+      query: await createFunctionHandle(api.chatTools.queryTable),
+      count: await createFunctionHandle(api.chatTools.countRecords),
+      aggregate: await createFunctionHandle(api.chatTools.aggregate),
+    },
+  });
+}
 ```
 
 `AutoToolsConfig` lets you restrict tables and hide fields:

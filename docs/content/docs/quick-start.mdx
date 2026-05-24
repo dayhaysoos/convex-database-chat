@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Minimal end-to-end setup using the client wrapper.
+description: Minimal end-to-end setup.
 ---
 
 ## 1. Define a tool
@@ -31,7 +31,8 @@ export const countRecords = query({
 
 ## 2. Wire the chat endpoints
 
-Use `defineDatabaseChat` to create a typed wrapper around the component.
+Create function handles inside a Convex function, then pass your tools to the
+component chat action.
 
 ```ts
 // convex/chat.ts
@@ -39,71 +40,107 @@ import { v } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
 import { createFunctionHandle } from "convex/server";
 import { components, api } from "./_generated/api";
-import { defineDatabaseChat } from "./components/databaseChat/client";
 import type { DatabaseChatTool } from "./components/databaseChat/tools";
 
-const tools: DatabaseChatTool[] = [
-  {
-    name: "countRecords",
-    description: "Count records in a table. Available tables: users, orders",
-    parameters: {
-      type: "object",
-      properties: {
-        table: { type: "string", enum: ["users", "orders"] },
+async function getTools(): Promise<DatabaseChatTool[]> {
+  return [
+    {
+      name: "countRecords",
+      description: "Count records in a table. Available tables: users, orders",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", enum: ["users", "orders"] },
+        },
+        required: ["table"],
       },
-      required: ["table"],
+      handler: await createFunctionHandle(api.chatTools.countRecords),
     },
-    handler: createFunctionHandle(api.chatTools.countRecords),
-  },
-];
-
-const chat = defineDatabaseChat(components.databaseChat, {
-  tools,
-  systemPrompt:
-    "You are a helpful assistant. Use the available tools to answer questions about the database.",
-});
+  ];
+}
 
 export const createConversation = mutation({
   args: { externalId: v.string(), title: v.optional(v.string()) },
-  handler: async (ctx, args) => chat.createConversation(ctx, args),
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(components.databaseChat.conversations.create, {
+      externalId: args.externalId,
+      title: args.title ?? "New Chat",
+    });
+  },
 });
 
 export const listConversations = query({
   args: { externalId: v.string() },
-  handler: async (ctx, args) => chat.listConversations(ctx, args.externalId),
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.databaseChat.conversations.list, {
+      externalId: args.externalId,
+    });
+  },
 });
 
 export const getMessages = query({
   args: { conversationId: v.string() },
-  handler: async (ctx, args) => chat.getMessages(ctx, args.conversationId),
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.databaseChat.messages.list, {
+      conversationId: args.conversationId as any,
+    });
+  },
 });
 
 export const getStreamState = query({
   args: { conversationId: v.string() },
-  handler: async (ctx, args) => chat.getStreamState(ctx, args.conversationId),
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.databaseChat.stream.getStream, {
+      conversationId: args.conversationId as any,
+    });
+  },
 });
 
 export const getStreamDeltas = query({
   args: { streamId: v.string(), cursor: v.number() },
-  handler: async (ctx, args) => chat.getStreamDeltas(ctx, args.streamId, args.cursor),
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.databaseChat.stream.listDeltas, {
+      streamId: args.streamId as any,
+      cursor: args.cursor,
+    });
+  },
 });
 
 export const abortStream = mutation({
   args: { conversationId: v.string(), reason: v.optional(v.string()) },
-  handler: async (ctx, args) =>
-    chat.abortStream(ctx, args.conversationId, args.reason ?? "User cancelled"),
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(
+      components.databaseChat.stream.abortByConversation,
+      {
+        conversationId: args.conversationId as any,
+        reason: args.reason ?? "User cancelled",
+      },
+    );
+  },
 });
 
 export const sendMessage = action({
   args: { conversationId: v.string(), message: v.string() },
-  handler: async (ctx, args) =>
-    chat.send(ctx, {
+  handler: async (ctx, args) => {
+    const tools = await getTools();
+
+    return await ctx.runAction(components.databaseChat.chat.send, {
       conversationId: args.conversationId,
       message: args.message,
-      apiKey: process.env.OPENROUTER_API_KEY!,
-    }),
+      config: {
+        apiKey: process.env.OPENROUTER_API_KEY!,
+        systemPrompt:
+          "You are a helpful assistant. Use the available tools to answer questions about the database.",
+        tools,
+      },
+    });
+  },
 });
 ```
+
+Raw tools keep working. For count/list/semantic tools that return the standard
+`{ data, meta }` result contract, see [Tools](/docs/guides/tools) for typed
+builders that attach reliability metadata and enable automatic result guidance.
 
 ## 3. Add a minimal UI
 
@@ -124,14 +161,8 @@ function ChatWidget() {
     createConversation({ externalId: "user:demo" }).then(setConversationId);
   }, [createConversation]);
 
-  const {
-    messages,
-    streamingContent,
-    isStreaming,
-    isLoading,
-    send,
-    abort,
-  } = useDatabaseChat({ conversationId });
+  const { messages, streamingContent, isStreaming, isLoading, send, abort } =
+    useDatabaseChat({ conversationId });
 
   return (
     <div>

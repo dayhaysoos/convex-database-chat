@@ -4,8 +4,16 @@ import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { generateEmbedding } from "@dayhaysoos/convex-database-chat/vector";
 
-const PRODUCTS = [
-  // Electronics (13 products)
+type ProductSeed = {
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  stock: number;
+};
+
+const BASE_PRODUCTS: ProductSeed[] = [
+  // Electronics base catalog
   {
     name: "Wireless Earbuds Pro",
     description:
@@ -99,7 +107,7 @@ const PRODUCTS = [
     stock: 34,
   },
 
-  // Clothing (12 products)
+  // Clothing base catalog
   {
     name: "Cotton T-Shirt Classic",
     description: "100% cotton crew neck t-shirt, multiple colors",
@@ -185,7 +193,7 @@ const PRODUCTS = [
     stock: 7,
   },
 
-  // Home (13 products)
+  // Home base catalog
   {
     name: "Coffee Maker Drip",
     description: "12-cup programmable drip coffee maker",
@@ -278,7 +286,7 @@ const PRODUCTS = [
     stock: 112,
   },
 
-  // Sports (12 products)
+  // Sports base catalog
   {
     name: "Yoga Mat Premium",
     description: "Extra thick non-slip yoga mat 72x24 inches",
@@ -365,21 +373,88 @@ const PRODUCTS = [
   },
 ];
 
+const PRODUCT_VARIANTS = [
+  {
+    suffix: "Value Pack",
+    description: "Value-priced option for budget-sensitive replenishment.",
+    priceMultiplier: 0.82,
+    stockOffset: 64,
+  },
+  {
+    suffix: "Premium Pack",
+    description: "Higher-margin configuration for premium assortment planning.",
+    priceMultiplier: 1.24,
+    stockOffset: 18,
+  },
+  {
+    suffix: "Bulk Case",
+    description: "Bulk replenishment case for larger store orders.",
+    priceMultiplier: 1.58,
+    stockOffset: 132,
+  },
+  {
+    suffix: "Seasonal Run",
+    description: "Limited seasonal run for promotion and markdown testing.",
+    priceMultiplier: 1.08,
+    stockOffset: -8,
+  },
+] as const;
+
+function roundPrice(price: number): number {
+  return Math.round(price * 100) / 100;
+}
+
+function buildVariantProduct(
+  product: ProductSeed,
+  productIndex: number,
+  variant: (typeof PRODUCT_VARIANTS)[number],
+  variantIndex: number,
+): ProductSeed {
+  const stockJitter = ((productIndex + 1) * (variantIndex + 3)) % 37;
+
+  return {
+    name: `${product.name} ${variant.suffix}`,
+    description: `${product.description}. ${variant.description}`,
+    category: product.category,
+    price: roundPrice(product.price * variant.priceMultiplier),
+    stock: Math.max(0, product.stock + variant.stockOffset + stockJitter - 18),
+  };
+}
+
+const GENERATED_PRODUCTS = BASE_PRODUCTS.flatMap((product, productIndex) =>
+  PRODUCT_VARIANTS.map((variant, variantIndex) =>
+    buildVariantProduct(product, productIndex, variant, variantIndex),
+  ),
+);
+
+const PRODUCTS = [...BASE_PRODUCTS, ...GENERATED_PRODUCTS] as const;
+
 export const seedProducts = mutation({
   args: {},
   handler: async (ctx) => {
-    // Check if products already exist
-    const existing = await ctx.db.query("products").first();
-    if (existing) {
-      return { message: "Products already seeded", count: 0 };
-    }
+    const existingProducts = await ctx.db.query("products").collect();
+    const existingNames = new Set(
+      existingProducts.map((product) => product.name),
+    );
+    let inserted = 0;
 
-    // Insert all products
     for (const product of PRODUCTS) {
+      if (existingNames.has(product.name)) {
+        continue;
+      }
       await ctx.db.insert("products", product);
+      existingNames.add(product.name);
+      inserted += 1;
     }
 
-    return { message: "Products seeded successfully", count: PRODUCTS.length };
+    return {
+      message:
+        inserted === 0
+          ? "Products already seeded"
+          : "Products seeded successfully",
+      count: inserted,
+      total: existingProducts.length + inserted,
+    };
   },
 });
 
@@ -458,7 +533,11 @@ export const generateProductEmbeddings = action({
     let skipped = 0;
 
     for (const product of products.slice(0, limit)) {
-      if (!args.overwrite && product.embedding && product.embedding.length > 0) {
+      if (
+        !args.overwrite &&
+        product.embedding &&
+        product.embedding.length > 0
+      ) {
         skipped += 1;
         continue;
       }

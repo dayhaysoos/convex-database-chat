@@ -3,6 +3,17 @@ import { createFunctionHandle } from "convex/server";
 import { action, mutation, query } from "./_generated/server";
 import { components, api } from "./_generated/api";
 import { defineVectorSearchTool } from "@dayhaysoos/convex-database-chat/vector";
+import {
+  booleanFilter,
+  defineCountTool,
+  definePaginatedListTool,
+  defineSemanticSearchTool,
+  enumFilter,
+  injectedString,
+  numberFilter,
+  stringFilter,
+  type DatabaseChatTool,
+} from "@dayhaysoos/convex-database-chat/tools";
 
 // =============================================================================
 // System Prompt
@@ -11,7 +22,8 @@ import { defineVectorSearchTool } from "@dayhaysoos/convex-database-chat/vector"
 const SYSTEM_PROMPT = `You are a helpful e-commerce inventory assistant. You help store managers understand their product inventory and find items.
 
 You have access to tools that let you:
-- Search products by name, category, or price range
+- Count products exactly using standard result metadata
+- List products with cursor pagination and standard result metadata
 - Run semantic search for fuzzy, concept-based queries
 - Get overall inventory statistics
 - Find low-stock products that need reordering
@@ -20,6 +32,8 @@ Available categories: electronics, clothing, home, sports
 
 When answering:
 - Be concise and use specific numbers from the data
+- Use standard count/list/semantic tools for normal product questions
+- Use legacy/raw tools only when the user explicitly asks to test compatibility
 - Always include product links using the viewUrl field: [Product Name](viewUrl)
 - Format prices with $ symbol (e.g., $29.99)
 - If stock is low (< 10), highlight it with "⚠️ Low Stock"
@@ -35,36 +49,58 @@ Example response format:
 // Tool Definitions
 // =============================================================================
 
-type ToolParameters = {
-  type: "object";
-  properties: Record<
-    string,
-    {
-      type: "string" | "number" | "boolean" | "array" | "object";
-      description?: string;
-      enum?: string[];
-      items?: { type: "string" | "number" | "boolean" | "array" | "object" };
-    }
-  >;
-  required?: string[];
-};
+type ToolParameters = DatabaseChatTool["parameters"];
+type ToolDefinition = DatabaseChatTool;
 
-type ToolDefinition = {
-  name: string;
-  description: string;
-  parameters: ToolParameters;
-  handler: string;
-  handlerType?: "query" | "mutation" | "action";
-};
+const PRODUCT_CATEGORIES = [
+  "electronics",
+  "clothing",
+  "home",
+  "sports",
+] as const;
+const PRODUCT_FILTERS = {
+  searchQuery: stringFilter({
+    description: "Text to search in product name or description.",
+  }),
+  category: enumFilter({
+    values: PRODUCT_CATEGORIES,
+    description: "Product category.",
+  }),
+  minPrice: numberFilter({
+    min: 0,
+    description: "Minimum product price.",
+  }),
+  maxPrice: numberFilter({
+    min: 0,
+    description: "Maximum product price.",
+  }),
+  inStockOnly: booleanFilter({
+    description: "Only include products with stock above zero.",
+  }),
+} as const;
+const SEMANTIC_FILTERS = {
+  category: enumFilter({
+    values: PRODUCT_CATEGORIES,
+    description: "Product category.",
+  }),
+  inStockOnly: booleanFilter({
+    description: "Only include products with stock above zero.",
+  }),
+} as const;
+const STORE_CONTEXT = {
+  storeId: injectedString({
+    description: "Current demo store id injected by the app.",
+  }),
+} as const;
 
 const TOOL_SPECS: Record<
   string,
   { name: string; description: string; parameters: ToolParameters }
 > = {
-  searchProducts: {
-    name: "searchProducts",
+  rawSearchProducts: {
+    name: "rawSearchProducts",
     description:
-      "Search products by name, description, category, or price range. Use this to find specific products or browse inventory.",
+      "Legacy raw product search with top-level filters. Use only when the user explicitly asks to test raw or backwards-compatible search behavior.",
     parameters: {
       type: "object",
       properties: {
@@ -75,7 +111,7 @@ const TOOL_SPECS: Record<
         category: {
           type: "string",
           description: "Filter by category",
-          enum: ["electronics", "clothing", "home", "sports"],
+          enum: [...PRODUCT_CATEGORIES],
         },
         minPrice: {
           type: "number",
@@ -126,7 +162,7 @@ const TOOL_SPECS: Record<
 };
 
 const SEMANTIC_TOOL_DESCRIPTION =
-  "Semantic search across product names and descriptions. Use for fuzzy queries like 'home office setup' or 'travel essentials'.";
+  "Standard semantic search across product names and descriptions. Returns sampled top-K result metadata; use for fuzzy queries like 'home office setup' or 'travel essentials'.";
 
 let toolsPromise: Promise<ToolDefinition[]> | null = null;
 
@@ -134,23 +170,65 @@ async function getTools(): Promise<ToolDefinition[]> {
   if (!toolsPromise) {
     toolsPromise = (async () => {
       const chatToolsApi = api.chatTools as any;
-      const [searchHandle, semanticHandle, statsHandle, lowStockHandle] =
-        (await Promise.all([
-          createFunctionHandle(api.chatTools.searchProducts),
-          createFunctionHandle(chatToolsApi.semanticSearchProducts),
-          createFunctionHandle(api.chatTools.getProductStats),
-          createFunctionHandle(api.chatTools.getLowStockProducts),
-        ])) as string[];
+      const [
+        countHandle,
+        listHandle,
+        semanticHandle,
+        rawSearchHandle,
+        rawSemanticHandle,
+        statsHandle,
+        lowStockHandle,
+      ] = (await Promise.all([
+        createFunctionHandle(api.chatTools.countProducts),
+        createFunctionHandle(api.chatTools.listProducts),
+        createFunctionHandle(chatToolsApi.semanticSearchProductsStandard),
+        createFunctionHandle(api.chatTools.searchProducts),
+        createFunctionHandle(chatToolsApi.semanticSearchProducts),
+        createFunctionHandle(api.chatTools.getProductStats),
+        createFunctionHandle(api.chatTools.getLowStockProducts),
+      ])) as string[];
 
       return [
-        {
-          ...TOOL_SPECS.searchProducts,
-          handler: searchHandle,
-        },
-        defineVectorSearchTool({
+        defineCountTool({
+          name: "countProducts",
+          description:
+            "Count products exactly for factual total/count questions. Filters must be nested under filters.",
+          handler: countHandle,
+          filters: PRODUCT_FILTERS,
+          injectedArgs: STORE_CONTEXT,
+        }),
+        definePaginatedListTool({
+          name: "listProducts",
+          description:
+            "List products with deterministic cursor pagination. Use for browsing, filtered lists, and immediate show-more follow-ups.",
+          handler: listHandle,
+          filters: PRODUCT_FILTERS,
+          injectedArgs: STORE_CONTEXT,
+          pagination: {
+            defaultLimit: 5,
+            maxLimit: 20,
+          },
+        }),
+        defineSemanticSearchTool({
           name: "semanticSearchProducts",
           description: SEMANTIC_TOOL_DESCRIPTION,
           handler: semanticHandle,
+          filters: SEMANTIC_FILTERS,
+          injectedArgs: STORE_CONTEXT,
+          limit: {
+            defaultLimit: 5,
+            maxLimit: 12,
+          },
+        }),
+        {
+          ...TOOL_SPECS.rawSearchProducts,
+          handler: rawSearchHandle,
+        },
+        defineVectorSearchTool({
+          name: "rawSemanticSearchProducts",
+          description:
+            "Legacy raw semantic search compatibility path. Returns a raw array instead of the standard result contract; use only when explicitly requested.",
+          handler: rawSemanticHandle,
         }),
         {
           ...TOOL_SPECS.getProductStats,
@@ -242,13 +320,13 @@ export const getStreamState = query({
       status: v.union(
         v.literal("streaming"),
         v.literal("finished"),
-        v.literal("aborted")
+        v.literal("aborted"),
       ),
       startedAt: v.number(),
       endedAt: v.optional(v.number()),
       abortReason: v.optional(v.string()),
     }),
-    v.null()
+    v.null(),
   ),
   handler: async (ctx, args) => {
     const result = await ctx.runQuery(streamApi.getStream, {
@@ -277,7 +355,7 @@ export const getStreamDeltas = query({
             v.literal("text-delta"),
             v.literal("tool-call"),
             v.literal("tool-result"),
-            v.literal("error")
+            v.literal("error"),
           ),
           text: v.optional(v.string()),
           toolCallId: v.optional(v.string()),
@@ -285,9 +363,9 @@ export const getStreamDeltas = query({
           args: v.optional(v.string()),
           result: v.optional(v.string()),
           error: v.optional(v.string()),
-        })
+        }),
       ),
-    })
+    }),
   ),
   handler: async (ctx, args) => {
     return await ctx.runQuery(streamApi.listDeltas, {
@@ -355,7 +433,11 @@ export const sendMessage = action({
         apiKey,
         model: "anthropic/claude-sonnet-4",
         systemPrompt: SYSTEM_PROMPT,
+        toolGuidance: "auto",
         tools,
+        toolContext: {
+          storeId: "demo-store",
+        },
       },
     })) as { success: boolean; content?: string; error?: string };
 

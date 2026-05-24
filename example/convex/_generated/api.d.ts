@@ -66,12 +66,24 @@ export declare const components: {
             maxMessagesForLLM?: number;
             model?: string;
             systemPrompt?: string;
+            toolContext?: any;
+            toolGuidance?: string;
             tools?: Array<{
               description: string;
               handler: string;
               handlerType?: "query" | "mutation" | "action";
+              metadata?: {
+                kind:
+                  | "count"
+                  | "paginated_list"
+                  | "semantic_search"
+                  | "detail"
+                  | "unknown";
+                resultContract?: "standard";
+              };
               name: string;
               parameters: {
+                additionalProperties?: boolean;
                 properties: any;
                 required?: Array<string>;
                 type: "object";
@@ -97,12 +109,24 @@ export declare const components: {
             maxMessagesForLLM?: number;
             model?: string;
             systemPrompt?: string;
+            toolContext?: any;
+            toolGuidance?: string;
             tools?: Array<{
               description: string;
               handler: string;
               handlerType?: "query" | "mutation" | "action";
+              metadata?: {
+                kind:
+                  | "count"
+                  | "paginated_list"
+                  | "semantic_search"
+                  | "detail"
+                  | "unknown";
+                resultContract?: "standard";
+              };
               name: string;
               parameters: {
+                additionalProperties?: boolean;
                 properties: any;
                 required?: Array<string>;
                 type: "object";

@@ -6,6 +6,24 @@ description: Shape assistant behavior with clear instructions.
 The system prompt tells the LLM how to behave. Keep it short, explicit, and
 grounded in your domain.
 
+When tools are configured, DatabaseChat automatically appends generic tool
+reliability guidance by default. This teaches the assistant to use `meta.count`
+for exact totals, treat paginated list results as pages, use
+`meta.pagination.nextCursor` for immediate "show more" follow-ups, and avoid
+using semantic search result length as a factual count.
+
+```ts
+const chat = defineDatabaseChat(components.databaseChat, {
+  systemPrompt: SYSTEM_PROMPT,
+  tools,
+  toolGuidance: "auto", // default
+});
+```
+
+Use `toolGuidance: "disabled"` if your system prompt fully owns those rules, or
+pass a custom string to append your own tool-result instructions instead of the
+generated guidance.
+
 ## Suggested structure
 
 ```
