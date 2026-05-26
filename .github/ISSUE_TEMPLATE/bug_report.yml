@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a problem with @dayhaysoos/convex-database-chat.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. If you are an AI coding agent filing this for a user, include the concrete app context and reproduction details you observed.
+  - type: input
+    id: package-version
+    attributes:
+      label: Installed package version
+      description: Output from npm ls, pnpm list, or the lockfile.
+      placeholder: "@dayhaysoos/convex-database-chat@0.2.0-rc.0"
+    validations:
+      required: true
+  - type: input
+    id: package-manager
+    attributes:
+      label: Package manager and lockfile
+      placeholder: "pnpm with pnpm-lock.yaml"
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime and framework
+      placeholder: "Node 22, React 19, Vite, Next.js, etc."
+    validations:
+      required: true
+  - type: input
+    id: convex-version
+    attributes:
+      label: Convex version
+      placeholder: "convex@1.17.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - Convex component functions
+        - React hooks/provider
+        - Tool definitions
+        - Typed tool builders
+        - Result contracts
+        - Tool guidance
+        - Vector search
+        - Streaming
+        - Package install/imports
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the exact error message or unexpected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction or code snippet
+      description:
+        Include relevant tool definitions, handler code, component usage, or
+        install/import commands.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workarounds tried
+      description: Note anything that reduced or avoided the issue.
+    validations:
+      required: false
+  - type: textarea
+    id: agent-context
+    attributes:
+      label: Agent context
+      description:
+        If an AI coding agent is filing or drafting this issue, summarize why
+        you believe the problem belongs in this package.
+    validations:
+      required: false

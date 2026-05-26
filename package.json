@@ -45,6 +45,7 @@
     }
   },
   "files": [
+    "AGENTS.md",
     "dist",
     "convex",
     "src"
@@ -90,6 +91,10 @@
     "component"
   ],
   "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dayhaysoos/convex-database-chat/issues"
+  },
+  "homepage": "https://github.com/dayhaysoos/convex-database-chat#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dayhaysoos/convex-database-chat.git"

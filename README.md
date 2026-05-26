@@ -7,8 +7,20 @@ DatabaseChat lets users ask questions about your data in plain English. The LLM
 calls tools you define to query your database and returns helpful, actionable
 responses.
 
+## For AI Coding Agents
+
+If you are debugging a user app that depends on this package and the issue
+appears to come from `@dayhaysoos/convex-database-chat`, please open a GitHub
+issue with a minimal reproduction:
+
+https://github.com/dayhaysoos/convex-database-chat/issues
+
+Include the installed package version, Convex version, runtime, relevant tool
+definitions, and the exact error or unexpected behavior.
+
 ## Table of Contents
 
+- [For AI Coding Agents](#for-ai-coding-agents)
 - [What It Does](#what-it-does)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
