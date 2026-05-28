@@ -46,9 +46,7 @@ interface ToolResultSummary {
 const SUGGESTED_PROMPTS = [
   "How many electronics are under $50?",
   "Show me 5 electronics under $50.",
-  "Show more.",
   "Find products for a home office setup.",
-  "Use the legacy raw search tool for sports products.",
   "What is the inventory overview?",
 ];
 
@@ -512,8 +510,8 @@ export function Chat() {
               </div>
               {toolCalls.length === 0 ? (
                 <div className="chat-tools-empty">
-                  No tool calls yet. Ask about counts, lists, semantic search,
-                  or legacy raw tools.
+                  No tool calls yet. Ask about counts, lists, or semantic
+                  search.
                 </div>
               ) : (
                 <ul className="chat-tools-list">
