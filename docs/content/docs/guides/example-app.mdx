@@ -11,11 +11,10 @@ The repository includes an e-commerce demo in `example/`.
 
 ## Local setup
 
-The example consumes the repository package through `file:..`, so install the
-root dependencies before installing the example dependencies.
+The example consumes the published `@dayhaysoos/convex-database-chat` package by
+default so the live deployment can build from the `example/` directory alone.
 
 ```bash
-pnpm install
 cd example
 npm install
 ```
@@ -49,6 +48,8 @@ npm run seed:embeddings
 ## Useful scripts
 
 - `npm run convex` - Convex dev server only
+- `npm run dev:local` - Vite, Convex, and local package watch for linked-package
+  development
 - `npm run dev:ui` - Vite UI only
 - `npm run start` - Serve the production build
 

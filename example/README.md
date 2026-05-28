@@ -16,14 +16,10 @@ to query an e-commerce product database using natural language.
 
 ### 1. Install dependencies
 
-The demo consumes the repository package through `file:..`, so install the root
-dependencies before installing the example dependencies.
+The demo consumes the published `@dayhaysoos/convex-database-chat` package by
+default so deploys can build from the `example/` directory alone.
 
 ```bash
-# From repo root
-pnpm install
-
-# Then install the example
 cd example
 npm install
 ```
@@ -70,8 +66,7 @@ meaning-based results.
 npm run dev
 ```
 
-This builds and watches the local package, then runs both the Convex dev server
-and the Vite UI in one command. Open
+This runs both the Convex dev server and the Vite UI in one command. Open
 [http://localhost:3000](http://localhost:3000) in your browser.
 
 Tip: use the **Tools** button in the chat header to see which tools are being
@@ -89,12 +84,16 @@ npm run dev:ui
 
 ## Local package development
 
-The example already uses the local package through `file:..`. For the older
-`npm link` workflow, you can use the helper script:
+The example uses the published package by default. To test unpublished local
+package changes, link the repository package first:
 
 ```bash
 # From repo root
+pnpm install
 ./dev-link.sh link
+
+# From example/
+npm run dev:local
 ```
 
 Or use `npm link` directly:
@@ -113,6 +112,7 @@ To go back to the published package:
 ```bash
 npm unlink @dayhaysoos/convex-database-chat
 npm install
+npm run dev
 ```
 
 ## Example Queries
