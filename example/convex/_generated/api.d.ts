@@ -63,8 +63,12 @@ export declare const components: {
         {
           config: {
             apiKey: string;
+            httpReferer?: string;
             maxMessagesForLLM?: number;
+            maxToolLoops?: number;
+            maxToolResultChars?: number;
             model?: string;
+            streamThrottleMs?: number;
             systemPrompt?: string;
             toolContext?: any;
             toolGuidance?: string;
@@ -89,6 +93,7 @@ export declare const components: {
                 type: "object";
               };
             }>;
+            xTitle?: string;
           };
           conversationId: string;
           message: string;
@@ -106,8 +111,12 @@ export declare const components: {
         {
           config: {
             apiKey: string;
+            httpReferer?: string;
             maxMessagesForLLM?: number;
+            maxToolLoops?: number;
+            maxToolResultChars?: number;
             model?: string;
+            streamThrottleMs?: number;
             systemPrompt?: string;
             toolContext?: any;
             toolGuidance?: string;
@@ -132,6 +141,7 @@ export declare const components: {
                 type: "object";
               };
             }>;
+            xTitle?: string;
           };
           conversationId: string;
           externalId: string;
@@ -199,6 +209,7 @@ export declare const components: {
         {
           content: string;
           conversationId: string;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -215,6 +226,7 @@ export declare const components: {
           content: string;
           conversationId: string;
           createdAt: number;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -230,6 +242,7 @@ export declare const components: {
           content: string;
           conversationId: string;
           createdAt: number;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -245,6 +258,7 @@ export declare const components: {
           content: string;
           conversationId: string;
           createdAt: number;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -260,6 +274,7 @@ export declare const components: {
           content: string;
           conversationId: string;
           createdAt: number;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
