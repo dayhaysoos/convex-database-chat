@@ -1,11 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { GenericDatabaseReader } from "convex/server";
-import type { DataModel, Id } from "./_generated/dataModel";
+import type { Id } from "./_generated/dataModel";
+import type { ReadContext } from "./contextTypes";
 import { requireConversationExternalId } from "./access";
-
-/** Minimal read-only context shape for the message helpers. */
-type ReadContext = { db: GenericDatabaseReader<DataModel> };
 
 // Shared validators
 const toolCallValidator = v.object({

@@ -83,6 +83,7 @@ import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 import type { TableInfo, SchemaToolHandlers } from "./schemaTools";
 import { generateToolsFromSchema } from "./schemaTools";
 import { formatToolsForLLM, findTool, validateToolArgs } from "./tools";
+import { executeToolHandler } from "./toolExecution";
 import {
   buildSystemPromptWithTools,
   type ToolGuidanceOption,
@@ -626,21 +627,4 @@ export function defineDatabaseChat(
   config: DatabaseChatConfig = {}
 ): DatabaseChatClient {
   return new DatabaseChatClient(component, config);
-}
-
-async function executeToolHandler(
-  ctx: ActionCtx,
-  tool: DatabaseChatTool,
-  args: Record<string, unknown>
-) {
-  const handlerType = tool.handlerType ?? "query";
-  switch (handlerType) {
-    case "mutation":
-      return await ctx.runMutation(tool.handler as any, args);
-    case "action":
-      return await ctx.runAction(tool.handler as any, args);
-    case "query":
-    default:
-      return await ctx.runQuery(tool.handler as any, args);
-  }
 }

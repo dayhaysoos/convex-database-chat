@@ -580,214 +580,37 @@ Other useful config options: `maxToolLoops` (default 5), `streamThrottleMs`
 truncated and flagged `{ truncated: true }`), and `httpReferer` / `xTitle`
 (OpenRouter attribution headers).
 
-### Full sendMessage implementation
+### Using the built-in `chat.send` action directly
+
+For full control (custom function handles, per-request tools), call the
+component's chat action from your own wrapper. It handles the LLM tool loop,
+streaming, and message persistence for you:
 
 ```typescript
 // convex/chat.ts
-import { v } from "convex/values";
-import { action } from "./_generated/server";
-import { components, api } from "./_generated/api";
-
-// Your tools array and system prompt
-const TOOLS = [
-  /* your tools */
-];
-const SYSTEM_PROMPT = `/* your prompt */`;
-
 export const sendMessage = action({
-  args: {
-    conversationId: v.string(),
-    message: v.string(),
-  },
-  returns: v.object({
-    success: v.boolean(),
-    content: v.optional(v.string()),
-    error: v.optional(v.string()),
-  }),
+  args: { conversationId: v.string(), message: v.string() },
   handler: async (ctx, args) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      return { success: false, error: "OPENROUTER_API_KEY not configured" };
-    }
-
-    try {
-      // 1. Save user message
-      await ctx.runMutation(components.databaseChat.messages.add, {
-        conversationId: args.conversationId as any,
-        role: "user",
-        content: args.message,
-      });
-
-      // 2. Get conversation history
-      const rawMessages = await ctx.runQuery(
-        components.databaseChat.messages.list,
-        { conversationId: args.conversationId as any },
-      );
-
-      // 3. Build messages array
-      const messages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...rawMessages.map((m) => ({ role: m.role, content: m.content })),
-      ];
-
-      // 4. Create stream for delta-based streaming
-      const streamId = await ctx.runMutation(
-        components.databaseChat.stream.create,
-        {
-          conversationId: args.conversationId as any,
-        },
-      );
-
-      // 5. Call LLM with tools using delta-based streaming
-      let deltaCursor = 0;
-      const response = await callLLMWithTools(
-        apiKey,
-        messages,
-        TOOLS,
-        async (deltaText) => {
-          // Send only new text (delta), not accumulated content
-          const success = await ctx.runMutation(
-            components.databaseChat.stream.addDelta,
-            {
-              streamId,
-              start: deltaCursor,
-              end: deltaCursor + 1,
-              parts: [{ type: "text-delta", text: deltaText }],
-            },
-          );
-          deltaCursor++;
-          // If addDelta returns false, stream was aborted
-          if (!success) {
-            throw new Error("Stream aborted");
-          }
-        },
-        async (toolName, toolArgs) => {
-          return await executeToolCall(ctx, toolName, toolArgs);
-        },
-      );
-
-      // 6. Finish streaming (cleans up deltas)
-      await ctx.runMutation(components.databaseChat.stream.finish, {
-        streamId,
-      });
-
-      // 7. Save assistant response
-      await ctx.runMutation(components.databaseChat.messages.add, {
-        conversationId: args.conversationId as any,
-        role: "assistant",
-        content: response.content,
-      });
-
-      return { success: true, content: response.content };
-    } catch (error) {
-      // Abort stream on error (if we have a streamId)
-      // Note: In production, you'd track streamId in a ref or closure
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
+    return await ctx.runAction(components.databaseChat.chat.sendForExternalId, {
+      conversationId: args.conversationId,
+      externalId, // derived server-side from your auth
+      message: args.message,
+      config: {
+        apiKey: process.env.OPENROUTER_API_KEY!,
+        systemPrompt: SYSTEM_PROMPT,
+        tools, // DatabaseChatTool[] with createFunctionHandle strings
+      },
+    });
   },
 });
-
-// Route tool calls to your queries
-async function executeToolCall(
-  ctx: any,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<unknown> {
-  switch (toolName) {
-    case "searchProducts":
-      return await ctx.runQuery(api.chatTools.searchProducts, args);
-    case "getOrderStats":
-      return await ctx.runQuery(api.chatTools.getOrderStats, args);
-    // Add your other tools here
-    default:
-      throw new Error(`Unknown tool: ${toolName}`);
-  }
-}
 ```
 
-### LLM calling with tool loop
+### Bringing your own LLM SDK
 
-```typescript
-async function callLLMWithTools(
-  apiKey: string,
-  messages: Array<{ role: string; content: string }>,
-  tools: any[],
-  onDelta: (deltaText: string) => Promise<void>, // Note: receives delta, not accumulated content
-  executeTool: (
-    name: string,
-    args: Record<string, unknown>,
-  ) => Promise<unknown>,
-): Promise<{ content: string }> {
-  const formattedTools = tools.map((t) => ({
-    type: "function" as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    },
-  }));
-
-  let currentMessages = [...messages];
-  let loopCount = 0;
-  const MAX_LOOPS = 5;
-
-  while (loopCount < MAX_LOOPS) {
-    loopCount++;
-
-    const response = await callOpenRouter(
-      apiKey,
-      currentMessages,
-      formattedTools,
-      onDelta,
-    );
-
-    // If no tool calls, we're done
-    if (!response.toolCalls || response.toolCalls.length === 0) {
-      return { content: response.content };
-    }
-
-    // Execute tool calls
-    const toolResults: Array<{ id: string; result: string }> = [];
-    for (const tc of response.toolCalls) {
-      try {
-        const args = JSON.parse(tc.arguments);
-        const result = await executeTool(tc.name, args);
-        toolResults.push({ id: tc.id, result: JSON.stringify(result) });
-      } catch (error) {
-        toolResults.push({
-          id: tc.id,
-          result: JSON.stringify({ error: String(error) }),
-        });
-      }
-    }
-
-    // Add assistant message with tool calls
-    currentMessages.push({
-      role: "assistant",
-      content: response.content || "",
-      tool_calls: response.toolCalls.map((tc) => ({
-        id: tc.id,
-        type: "function",
-        function: { name: tc.name, arguments: tc.arguments },
-      })),
-    } as any);
-
-    // Add tool results
-    for (const tr of toolResults) {
-      currentMessages.push({
-        role: "tool",
-        content: tr.result,
-        tool_call_id: tr.id,
-      } as any);
-    }
-  }
-
-  return { content: "Hit tool call limit." };
-}
-```
+Use `defineDatabaseChat`'s lower-level primitives (`addMessage`,
+`getMessagesForLLM`) or the exported `DeltaStreamer` class if you want to use
+Vercel AI SDK, direct OpenAI clients, or another provider instead of the
+built-in OpenRouter integration.
 
 ---
 
@@ -1379,13 +1202,19 @@ convex/component/                  # Backend (Convex component)
 ├── stream.ts                      # Delta-based streaming (create, addDelta, finish, abort)
 ├── deltaStreamer.ts               # DeltaStreamer class for batched writes
 ├── chat.ts                        # Main send action with OpenRouter
-├── tools.ts                       # Tool types & helpers
-├── schemaTools.ts                 # Auto-tool generation
+├── toolExecution.ts               # Tool dispatch + trusted context injection
+├── tools.ts                       # Tool types & typed builders
+├── resultContract.ts              # Standard { data, meta } result envelope
+├── toolGuidance.ts                # Reliability guidance injection
+├── schemaTools.ts                  # Auto-tool generation
+├── access.ts                      # externalId ownership checks
+├── contextTypes.ts                # Shared DataModel-typed context helpers
 ├── client.ts                      # Client wrapper (defineDatabaseChat)
 └── *.test.ts                      # Tests
 
 src/                               # Frontend (React)
 ├── react.tsx                      # React hooks (useDatabaseChat, useConversations, etc.)
+├── vector.ts                      # Vector search helpers
 ├── react.test.tsx                 # Hook tests
 └── index.ts                       # Package exports
 ```

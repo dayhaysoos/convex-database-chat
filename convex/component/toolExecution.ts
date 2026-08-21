@@ -27,7 +27,7 @@ export async function executeToolWithContext(
   return { result, args: mergedArgs };
 }
 
-async function executeToolHandler(
+export async function executeToolHandler(
   ctx: ToolExecutionContext,
   tool: DatabaseChatTool,
   args: Record<string, unknown>
