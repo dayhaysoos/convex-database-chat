@@ -500,6 +500,10 @@ describe("databaseChat streaming", () => {
         reason: "User cancelled",
       });
 
+      // User aborts are recorded as "interrupt"
+      const streamDoc = await t.run((ctx) => ctx.db.get(streamId));
+      expect(streamDoc?.abortKind).toBe("interrupt");
+
       const messages = await t.query(api.messages.list, { conversationId });
       const partialMessages = messages.filter((m) => m.partial === true);
       expect(partialMessages).toHaveLength(1);
@@ -539,6 +543,10 @@ describe("databaseChat streaming", () => {
 
       // ...then the LLM requests a tool call and a new round starts
       await t.mutation(api.stream.create, { conversationId });
+
+      // Rotated-out streams are recorded as "rotation"
+      const rotatedDoc = await t.run((ctx) => ctx.db.get(firstStreamId));
+      expect(rotatedDoc?.abortKind).toBe("rotation");
 
       const messages = await t.query(api.messages.list, { conversationId });
       expect(messages).toHaveLength(0);

@@ -10,7 +10,7 @@ import type {
   GenericDatabaseWriter,
   GenericMutationCtx,
 } from "convex/server";
-import type { DataModel, Doc, Id } from "./_generated/dataModel";
+import type { DataModel, Id } from "./_generated/dataModel";
 import {
   requireConversationExternalId,
   requireStreamExternalId,
@@ -30,6 +30,10 @@ type SchedulingContext = {
 const TIMEOUT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DELTAS_PER_QUERY = 100;
 const CLEANUP_DELAY_MS = 30 * 1000; // 30 seconds - delay before deleting finished streams
+
+// Human-readable reason recorded when stream.create auto-aborts the previous
+// stream because a new one started (an internal tool-loop rotation).
+const ROTATION_ABORT_REASON = "New stream started";
 
 // Max deltas to scan when reconstructing partial content
 const MAX_DELTAS_FOR_RECOVERY = 500;
@@ -87,7 +91,7 @@ export const create = mutation({
       await ctx.db.patch(existingStream._id, {
         status: "aborted",
         abortKind: "rotation",
-        abortReason: "New stream started",
+        abortReason: ROTATION_ABORT_REASON,
         endedAt: Date.now(),
         timeoutFnId: undefined,
       });
@@ -260,7 +264,7 @@ export const abort = mutation({
     });
 
     // Persist any partially streamed content so user work isn't lost
-    await persistPartialContent(ctx, stream);
+    await persistPartialContent(ctx, args.streamId);
 
     // Delete all deltas
     await deleteStreamDeltas(ctx, args.streamId);
@@ -463,7 +467,7 @@ export const timeoutStream = internalMutation({
     });
 
     // Persist any partially streamed content so user work isn't lost
-    await persistPartialContent(ctx, stream);
+    await persistPartialContent(ctx, args.streamId);
 
     // Delete deltas
     await deleteStreamDeltas(ctx, args.streamId);
@@ -655,7 +659,7 @@ async function abortStreamByConversationId(
   });
 
   // Persist any partially streamed content so user work isn't lost
-  await persistPartialContent(ctx, stream);
+  await persistPartialContent(ctx, stream._id);
 
   // Delete all deltas
   await deleteStreamDeltas(ctx, stream._id);
@@ -674,12 +678,16 @@ async function abortStreamByConversationId(
  * interruptions (user abort, timeout, error) so user-visible content isn't
  * lost. Rotation aborts ("rotation" kind - internal tool-loop rounds) are
  * skipped: their deltas are discarded by design.
+ *
+ * Re-reads the stream record rather than trusting the caller's (possibly
+ * pre-patch) snapshot, so the abortKind guard always reflects committed state.
  */
 async function persistPartialContent(
   ctx: WriteContext,
-  stream: Doc<"streamingMessages">
+  streamId: Id<"streamingMessages">
 ): Promise<void> {
-  if (stream.abortKind === "rotation") {
+  const stream = await ctx.db.get(streamId);
+  if (!stream || stream.abortKind === "rotation") {
     return;
   }
 

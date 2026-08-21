@@ -193,6 +193,10 @@ export class DeltaStreamer {
    * Abort the stream with a reason.
    */
   async fail(reason: string): Promise<void> {
+    // Early return when already aborted: callers invoke fail() from error
+    // paths that may themselves have been triggered by an abort (external or
+    // detected). Skipping keeps the original abort reason/kind intact and
+    // avoids a redundant stream.abort mutation. Note this also skips onAbort.
     if (this.abortController.signal.aborted) {
       return;
     }

@@ -1336,6 +1336,9 @@ Known limitations:
   rounds rotate).
 - Abort detection during tool execution lands at the next tool-loop boundary;
   a long-running individual tool call cannot be interrupted mid-flight.
+- Between tool rounds, streams rotate eagerly: clients subscribed to stream
+  state may observe a brief `streaming` -> `aborted` -> `streaming`
+  transition with no content between rounds.
 
 ---
 
