@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-21
+
+### Changed
+
+- Internal refactor: `executeToolHandler` deduplicated into
+  `toolExecution.ts`; shared DataModel-typed context helpers extracted to
+  `contextTypes.ts`. No API or behavior changes.
+
+### Fixed
+
+- README: removed examples referencing non-exported functions and replaced
+  them with the actual built-in integration path; File Structure listing now
+  matches the real tree.
+
 ## [0.3.0] - 2026-08-21
 
 ### Added
@@ -68,5 +82,6 @@ streaming, abort support, tool calling, React hooks, scoped
 `*ForExternalId` endpoints, typed tool builders, result contracts, and tool
 guidance injection.
 
+[0.3.1]: https://github.com/dayhaysoos/convex-database-chat/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dayhaysoos/convex-database-chat/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dayhaysoos/convex-database-chat/releases/tag/v0.2.0
