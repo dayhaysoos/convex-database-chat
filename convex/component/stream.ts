@@ -16,6 +16,15 @@ const TIMEOUT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DELTAS_PER_QUERY = 100;
 const CLEANUP_DELAY_MS = 30 * 1000; // 30 seconds - delay before deleting finished streams
 
+// Reason used when stream.create auto-aborts the previous stream because a
+// new one started. This is an internal rotation (e.g. between tool-calling
+// rounds), not a user-facing interruption, so partial content must NOT be
+// persisted for it.
+export const STREAM_ROTATION_ABORT_REASON = "New stream started";
+
+// Max deltas to scan when reconstructing partial content
+const MAX_DELTAS_FOR_RECOVERY = 500;
+
 // Validator for stream parts - matches schema and StreamPart interface
 const streamPartValidator = v.object({
   type: v.union(
@@ -66,7 +75,7 @@ export const create = mutation({
       // Abort the existing stream
       await ctx.db.patch(existingStream._id, {
         status: "aborted",
-        abortReason: "New stream started",
+        abortReason: STREAM_ROTATION_ABORT_REASON,
         endedAt: Date.now(),
         timeoutFnId: undefined,
       });
@@ -236,6 +245,9 @@ export const abort = mutation({
       endedAt: Date.now(),
       timeoutFnId: undefined,
     });
+
+    // Persist any partially streamed content so user work isn't lost
+    await persistPartialContent(ctx, stream);
 
     // Delete all deltas
     await deleteStreamDeltas(ctx, args.streamId);
@@ -436,6 +448,9 @@ export const timeoutStream = internalMutation({
       timeoutFnId: undefined,
     });
 
+    // Persist any partially streamed content so user work isn't lost
+    await persistPartialContent(ctx, stream);
+
     // Delete deltas
     await deleteStreamDeltas(ctx, args.streamId);
 
@@ -624,6 +639,9 @@ async function abortStreamByConversationId(
     timeoutFnId: undefined,
   });
 
+  // Persist any partially streamed content so user work isn't lost
+  await persistPartialContent(ctx, stream);
+
   // Delete all deltas
   await deleteStreamDeltas(ctx, stream._id);
 
@@ -633,4 +651,54 @@ async function abortStreamByConversationId(
   });
 
   return true;
+}
+
+/**
+ * Helper: Reconstruct partially streamed text from deltas and save it as a
+ * partial assistant message. Called before deltas are deleted on genuine
+ * interruptions (user abort, timeout, error) so user-visible content isn't
+ * lost. Skipped for internal rotations (new round of a tool loop) and when
+ * nothing was streamed.
+ */
+async function persistPartialContent(
+  ctx: { db: any },
+  stream: {
+    _id: Id<"streamingMessages">;
+    conversationId: Id<"conversations">;
+    abortReason?: string;
+  }
+): Promise<void> {
+  if (stream.abortReason === STREAM_ROTATION_ABORT_REASON) {
+    return;
+  }
+
+  const deltas = await ctx.db
+    .query("streamDeltas")
+    .withIndex("by_stream_cursor", (q: any) =>
+      q.eq("streamId", stream._id)
+    )
+    .take(MAX_DELTAS_FOR_RECOVERY);
+
+  let text = "";
+  for (const delta of deltas) {
+    for (const part of delta.parts) {
+      if (part.type === "text-delta" && part.text) {
+        text += part.text;
+      }
+    }
+  }
+
+  if (!text.trim()) {
+    return;
+  }
+
+  const now = Date.now();
+  await ctx.db.patch(stream.conversationId, { updatedAt: now });
+  await ctx.db.insert("messages", {
+    conversationId: stream.conversationId,
+    role: "assistant",
+    content: text,
+    partial: true,
+    createdAt: now,
+  });
 }

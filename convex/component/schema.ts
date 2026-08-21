@@ -35,6 +35,9 @@ export default defineSchema({
         })
       )
     ),
+    // True when generation was interrupted (abort, timeout, error) and this
+    // message holds the partially streamed content
+    partial: v.optional(v.boolean()),
     createdAt: v.number(),
   }).index("by_conversation", ["conversationId", "createdAt"]),
 

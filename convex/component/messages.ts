@@ -31,6 +31,7 @@ export const add = mutation({
     content: v.string(),
     toolCalls: v.optional(v.array(toolCallValidator)),
     toolResults: v.optional(v.array(toolResultValidator)),
+    partial: v.optional(v.boolean()),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -51,6 +52,7 @@ export const add = mutation({
       content: args.content,
       toolCalls: args.toolCalls,
       toolResults: args.toolResults,
+      partial: args.partial,
       createdAt: now,
     });
   },
@@ -74,6 +76,7 @@ export const list = query({
       content: v.string(),
       toolCalls: v.optional(v.array(toolCallValidator)),
       toolResults: v.optional(v.array(toolResultValidator)),
+      partial: v.optional(v.boolean()),
       createdAt: v.number(),
     })
   ),
@@ -101,6 +104,7 @@ export const listForExternalId = query({
       content: v.string(),
       toolCalls: v.optional(v.array(toolCallValidator)),
       toolResults: v.optional(v.array(toolResultValidator)),
+      partial: v.optional(v.boolean()),
       createdAt: v.number(),
     })
   ),
@@ -130,6 +134,7 @@ export const getLatest = query({
       content: v.string(),
       toolCalls: v.optional(v.array(toolCallValidator)),
       toolResults: v.optional(v.array(toolResultValidator)),
+      partial: v.optional(v.boolean()),
       createdAt: v.number(),
     }),
     v.null()
@@ -157,6 +162,7 @@ export const getLatestForExternalId = query({
       content: v.string(),
       toolCalls: v.optional(v.array(toolCallValidator)),
       toolResults: v.optional(v.array(toolResultValidator)),
+      partial: v.optional(v.boolean()),
       createdAt: v.number(),
     }),
     v.null()
