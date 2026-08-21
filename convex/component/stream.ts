@@ -5,26 +5,16 @@ import {
   internalMutation,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type {
-  GenericDatabaseReader,
-  GenericDatabaseWriter,
-  GenericMutationCtx,
-} from "convex/server";
-import type { DataModel, Id } from "./_generated/dataModel";
+  ReadContext,
+  SchedulingContext,
+  WriteContext,
+} from "./contextTypes";
 import {
   requireConversationExternalId,
   requireStreamExternalId,
 } from "./access";
-
-/**
- * Minimal context shapes shared by the streaming helpers. Typed against the
- * component's DataModel so db reads/writes and index callbacks are checked.
- */
-type ReadContext = { db: GenericDatabaseReader<DataModel> };
-type WriteContext = { db: GenericDatabaseWriter<DataModel> };
-type SchedulingContext = {
-  scheduler: GenericMutationCtx<DataModel>["scheduler"];
-};
 
 // Timeout configuration
 const TIMEOUT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
