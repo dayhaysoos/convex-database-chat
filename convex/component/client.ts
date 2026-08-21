@@ -145,6 +145,30 @@ export interface DatabaseChatConfig {
    * OpenRouter attribution header (X-Title). Defaults to "DatabaseChat".
    */
   xTitle?: string;
+  /**
+   * Max characters of a serialized tool result sent to the LLM (default: 16000).
+   * Oversized results are truncated and flagged with `{ truncated: true }`.
+   */
+  maxToolResultChars?: number;
+  /**
+   * Resolve the caller's externalId server-side. When configured, all client
+   * methods route through ownership-checked (*ForExternalId) endpoints -
+   * consumers can no longer accidentally skip access control.
+   *
+   * Runs inside your app's functions, so you can use Convex Auth, Clerk, or
+   * any identity provider:
+   *
+   * ```typescript
+   * const chat = defineDatabaseChat(components.databaseChat, {
+   *   getExternalId: async (ctx) => {
+   *     const userId = await getAuthUserId(ctx);
+   *     if (!userId) throw new Error("Unauthorized");
+   *     return `user:${userId}`;
+   *   },
+   * });
+   * ```
+   */
+  getExternalId?: (ctx: QueryCtx | MutationCtx | ActionCtx) => Promise<string>;
 }
 
 export interface SendMessageOptions {
@@ -164,6 +188,13 @@ export interface SendMessageOptions {
   maxToolLoops?: number;
   /** Override stream throttle for this message */
   streamThrottleMs?: number;
+  /** Override max tool result chars for this message */
+  maxToolResultChars?: number;
+  /**
+   * Explicit externalId. Overrides the configured getExternalId resolver.
+   * Only use this if the value is derived server-side, never from client input.
+   */
+  externalId?: string;
 }
 
 export interface SendMessageResult {
@@ -273,58 +304,103 @@ export class DatabaseChatClient {
   }
 
   /**
+   * Resolve the externalId for a call: explicit argument first, then the
+   * configured resolver. Throws when neither is available - data access
+   * without an identity check is not allowed through this client.
+   */
+  private async resolveExternalId(
+    ctx: QueryCtx | MutationCtx | ActionCtx,
+    explicit?: string
+  ): Promise<string> {
+    if (explicit) {
+      return explicit;
+    }
+    if (this.config.getExternalId) {
+      return await this.config.getExternalId(ctx);
+    }
+    throw new Error(
+      "defineDatabaseChat: no identity available. Configure getExternalId(ctx) " +
+        "in your defineDatabaseChat config (recommended) or pass an explicit " +
+        "server-derived externalId to access conversations securely."
+    );
+  }
+
+  /**
    * Create a new conversation.
    */
   async createConversation(
     ctx: MutationCtx,
-    options: { externalId: string; title?: string }
+    options: { externalId?: string; title?: string }
   ): Promise<string> {
-    return await ctx.runMutation(this.component.conversations.create, options);
+    const externalId = await this.resolveExternalId(ctx, options.externalId);
+    return await ctx.runMutation(this.component.conversations.create, {
+      externalId,
+      title: options.title,
+    });
   }
 
   /**
-   * Get a conversation by ID.
+   * Get a conversation by ID (ownership-checked).
    */
-  async getConversation(ctx: QueryCtx, conversationId: string) {
-    return await ctx.runQuery(this.component.conversations.get, {
+  async getConversation(
+    ctx: QueryCtx,
+    conversationId: string,
+    options?: { externalId?: string }
+  ) {
+    const externalId = await this.resolveExternalId(ctx, options?.externalId);
+    return await ctx.runQuery(this.component.conversations.getForExternalId, {
       conversationId: conversationId as any,
+      externalId,
     });
   }
 
   /**
    * List conversations for an external ID (e.g., user ID).
    */
-  async listConversations(ctx: QueryCtx, externalId: string) {
+  async listConversations(ctx: QueryCtx, explicitExternalId?: string) {
+    const externalId = await this.resolveExternalId(ctx, explicitExternalId);
     return await ctx.runQuery(this.component.conversations.list, {
       externalId,
     });
   }
 
   /**
-   * Get messages in a conversation.
+   * Get messages in a conversation (ownership-checked).
    * Returns the most recent messages, bounded by maxMessagesForDisplay config (default: 100).
    */
-  async getMessages(ctx: QueryCtx, conversationId: string) {
-    return await ctx.runQuery(this.component.messages.list, {
+  async getMessages(
+    ctx: QueryCtx,
+    conversationId: string,
+    options?: { externalId?: string; limit?: number }
+  ) {
+    const externalId = await this.resolveExternalId(ctx, options?.externalId);
+    return await ctx.runQuery(this.component.messages.listForExternalId, {
       conversationId: conversationId as any,
-      limit: this.config.maxMessagesForDisplay ?? 100,
+      externalId,
+      limit: options?.limit ?? this.config.maxMessagesForDisplay ?? 100,
     });
   }
 
   /**
-   * Get the current stream state for a conversation.
+   * Get the current stream state for a conversation (ownership-checked).
    * Use this to check if streaming is active and get the stream ID.
    */
-  async getStreamState(ctx: QueryCtx, conversationId: string) {
-    return await ctx.runQuery(this.component.stream.getStream, {
+  async getStreamState(
+    ctx: QueryCtx,
+    conversationId: string,
+    options?: { externalId?: string }
+  ) {
+    const externalId = await this.resolveExternalId(ctx, options?.externalId);
+    return await ctx.runQuery(this.component.stream.getStreamForExternalId, {
       conversationId: conversationId as any,
+      externalId,
     });
   }
 
   /**
-   * Get stream deltas from a cursor position.
+   * Get stream deltas from a cursor position (ownership-checked).
    * Use with getStreamState to efficiently fetch streaming content.
-   * 
+   *
    * @example
    * ```typescript
    * const state = await chat.getStreamState(ctx, conversationId);
@@ -337,25 +413,31 @@ export class DatabaseChatClient {
   async getStreamDeltas(
     ctx: QueryCtx,
     streamId: string,
-    cursor: number
+    cursor: number,
+    options?: { externalId?: string }
   ) {
-    return await ctx.runQuery(this.component.stream.listDeltas, {
+    const externalId = await this.resolveExternalId(ctx, options?.externalId);
+    return await ctx.runQuery(this.component.stream.listDeltasForExternalId, {
       streamId: streamId as any,
+      externalId,
       cursor,
     });
   }
 
   /**
-   * Abort an active stream for a conversation.
+   * Abort an active stream for a conversation (ownership-checked).
    * Call this when the user wants to stop generation.
    */
   async abortStream(
     ctx: MutationCtx,
     conversationId: string,
-    reason: string = "User cancelled"
+    reason: string = "User cancelled",
+    options?: { externalId?: string }
   ): Promise<boolean> {
-    return await ctx.runMutation(this.component.stream.abortByConversation, {
+    const externalId = await this.resolveExternalId(ctx, options?.externalId);
+    return await ctx.runMutation(this.component.stream.abortForExternalId, {
       conversationId: conversationId as any,
+      externalId,
       reason,
     });
   }
@@ -371,8 +453,10 @@ export class DatabaseChatClient {
     ctx: ActionCtx,
     options: SendMessageOptions
   ): Promise<SendMessageResult> {
-    return await ctx.runAction(this.component.chat.send, {
+    const externalId = await this.resolveExternalId(ctx, options.externalId);
+    return await ctx.runAction(this.component.chat.sendForExternalId, {
       conversationId: options.conversationId as any,
+      externalId,
       message: options.message,
       config: {
         apiKey: options.apiKey,
@@ -385,6 +469,8 @@ export class DatabaseChatClient {
         maxToolLoops: options.maxToolLoops ?? this.config.maxToolLoops,
         streamThrottleMs:
           options.streamThrottleMs ?? this.config.streamThrottleMs,
+        maxToolResultChars:
+          options.maxToolResultChars ?? this.config.maxToolResultChars,
         httpReferer: this.config.httpReferer,
         xTitle: this.config.xTitle,
       },

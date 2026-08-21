@@ -535,6 +535,51 @@ export const getOrderStats = query({
 The chat integration wires your tools to the component and handles the LLM
 interaction.
 
+### Recommended: `defineDatabaseChat` with `getExternalId`
+
+Configure an identity resolver once and every client method routes through
+ownership-checked endpoints automatically. The resolver runs inside your app's
+Convex functions, so it works with Convex Auth, Clerk, or any identity
+provider - the component itself stays auth-agnostic.
+
+```typescript
+// convex/chat.ts
+import { components } from "./_generated/api";
+import { defineDatabaseChat } from "@dayhaysoos/convex-database-chat/client";
+
+const chat = defineDatabaseChat(components.databaseChat, {
+  model: "openai/gpt-4o",
+  systemPrompt: SYSTEM_PROMPT,
+  tools: TOOLS,
+  // Called server-side in each wrapper; never trust client-supplied IDs.
+  getExternalId: async (ctx) => {
+    const userId = await getAuthUserId(ctx); // your auth
+    if (!userId) throw new Error("Unauthorized");
+    return `user:${userId}`;
+  },
+});
+
+// All of these are ownership-checked under the hood:
+await chat.createConversation(ctx, { title: "New Chat" });
+const messages = await chat.getMessages(ctx, conversationId);
+const state = await chat.getStreamState(ctx, conversationId);
+const result = await chat.send(ctx, {
+  conversationId,
+  message,
+  apiKey: process.env.OPENROUTER_API_KEY!,
+});
+```
+
+If no identity can be resolved (no `getExternalId` configured and no explicit
+`externalId` passed), data-access methods throw rather than silently skipping
+access control. You can still call the raw component endpoints directly for
+advanced setups - see [Security & Multi-tenant Access](#security--multi-tenant-access).
+
+Other useful config options: `maxToolLoops` (default 5), `streamThrottleMs`
+(default 100), `maxToolResultChars` (default 16000, oversized tool results are
+truncated and flagged `{ truncated: true }`), and `httpReferer` / `xTitle`
+(OpenRouter attribution headers).
+
 ### Full sendMessage implementation
 
 ```typescript
@@ -1278,6 +1323,11 @@ sees them.
 | `streaming` | Stream is active, deltas being written               |
 | `finished`  | Stream completed successfully                        |
 | `aborted`   | Stream was cancelled (user abort, error, or timeout) |
+
+When a stream is interrupted by a user abort, timeout, or error, any content
+already streamed is persisted as an assistant message with `partial: true` so
+partial responses aren't lost. (Intermediate rounds of tool-calling loops are
+not streamed or persisted - only the final answer is.)
 
 ---
 

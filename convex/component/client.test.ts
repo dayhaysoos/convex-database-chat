@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, it, expect } from "vitest";
 import { convexTest } from "convex-test";
+import { getFunctionName } from "convex/server";
 import schema from "./schema";
 import { api } from "./_generated/api";
 import { DatabaseChatClient, defineDatabaseChat } from "./client";
@@ -282,6 +283,80 @@ describe("DatabaseChatClient", () => {
       expect(messages).toHaveLength(2);
       expect(messages[0].toolCalls).toHaveLength(1);
       expect(messages[1].toolResults).toHaveLength(1);
+    });
+  });
+
+  describe("getExternalId resolver", () => {
+    function fakeQueryCtx(resolvedExternalId: string) {
+      const calls: Array<{ name: string; args: any }> = [];
+      const ctx = {
+        runQuery: async (handler: unknown, args: any) => {
+          calls.push({ name: getFunctionName(handler as any), args });
+          return null;
+        },
+        config: { getExternalId: async () => resolvedExternalId },
+      };
+      return { ctx: ctx as any, calls };
+    }
+
+    it("throws a clear error when no identity is available", async () => {
+      const client = defineDatabaseChat(api, {});
+      const t = setupTest();
+      const conversationId = await t.mutation(api.conversations.create, {
+        externalId: "user:test",
+      });
+
+      await expect(
+        client.getMessages({ db: {} } as any, conversationId as any)
+      ).rejects.toThrow(/getExternalId/);
+    });
+
+    it("routes getMessages through the scoped endpoint with the resolver", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:resolved",
+      });
+      const { ctx, calls } = fakeQueryCtx("user:resolved");
+
+      await client.getMessages(ctx, "conv123" as any);
+
+      expect(calls[0].name).toBe("messages:listForExternalId");
+      expect(calls[0].args.externalId).toBe("user:resolved");
+    });
+
+    it("routes send through sendForExternalId", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:resolved",
+      });
+
+      const calls: Array<{ name: string; args: any }> = [];
+      const ctx = {
+        runAction: async (handler: unknown, args: any) => {
+          calls.push({ name: getFunctionName(handler as any), args });
+          return { success: true };
+        },
+      } as any;
+
+      await client.send(ctx, {
+        conversationId: "conv123" as any,
+        message: "hello",
+        apiKey: "key",
+      });
+
+      expect(calls[0].name).toBe("chat:sendForExternalId");
+      expect(calls[0].args.externalId).toBe("user:resolved");
+    });
+
+    it("explicit externalId overrides the resolver", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:from-resolver",
+      });
+      const { ctx, calls } = fakeQueryCtx("ignored");
+
+      await client.getMessages(ctx, "conv123" as any, {
+        externalId: "user:explicit",
+      });
+
+      expect(calls[0].args.externalId).toBe("user:explicit");
     });
   });
 });
