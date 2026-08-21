@@ -1,6 +1,6 @@
 import type { GenericActionCtx } from "convex/server";
 import type { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { DataModel, Id } from "./_generated/dataModel";
 
 /**
  * A part of the stream - matches AI SDK's UIMessageChunk format for compatibility
@@ -56,7 +56,7 @@ export class DeltaStreamer {
   public readonly abortController: AbortController;
 
   constructor(
-    private ctx: GenericActionCtx<any>,
+    private ctx: GenericActionCtx<DataModel>,
     private component: typeof api,
     private conversationId: Id<"conversations">,
     config: DeltaStreamerConfig = {}
@@ -138,6 +138,38 @@ export class DeltaStreamer {
   }
 
   /**
+   * Reset streamer state so the next write starts a fresh stream.
+   * Used between tool-calling rounds: only the final round's text should be
+   * streamed to clients. The previous stream is aborted (and its deltas
+   * deleted) automatically by stream.create when the new stream is created,
+   * which also triggers a client-side reset since the streamId changes.
+   */
+  async resetForNewRound(): Promise<void> {
+    if (this.ongoingWrite) {
+      try {
+        await this.ongoingWrite;
+      } catch {
+        // A failed write on the old stream shouldn't block rotation
+      }
+      this.ongoingWrite = undefined;
+    }
+    if (this.creatingStreamPromise) {
+      try {
+        // Await any in-flight creation so it can't resolve later and
+        // reassign a stale streamId over the reset.
+        await this.creatingStreamPromise;
+      } catch {
+        // Creation failures are handled by the caller
+      }
+      this.creatingStreamPromise = undefined;
+    }
+    this.nextParts = [];
+    this.streamId = undefined;
+    this.cursor = 0;
+    this.latestWrite = 0;
+  }
+
+  /**
    * Finish the stream successfully. Flushes any remaining parts.
    */
   async finish(): Promise<void> {
@@ -161,6 +193,10 @@ export class DeltaStreamer {
    * Abort the stream with a reason.
    */
   async fail(reason: string): Promise<void> {
+    // Early return when already aborted: callers invoke fail() from error
+    // paths that may themselves have been triggered by an abort (external or
+    // detected). Skipping keeps the original abort reason/kind intact and
+    // avoids a redundant stream.abort mutation. Note this also skips onAbort.
     if (this.abortController.signal.aborted) {
       return;
     }

@@ -479,6 +479,85 @@ describe("databaseChat streaming", () => {
       });
       expect(deltas).toHaveLength(0);
     });
+
+    it("persists partially streamed content as a partial assistant message on abort", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+
+      await t.mutation(api.stream.addDelta, {
+        streamId,
+        start: 0,
+        end: 2,
+        parts: [
+          { type: "text-delta", text: "The answer is " },
+          { type: "text-delta", text: "42" },
+        ],
+      });
+
+      await t.mutation(api.stream.abort, {
+        streamId,
+        reason: "User cancelled",
+      });
+
+      // User aborts are recorded as "interrupt"
+      const streamDoc = await t.run((ctx) => ctx.db.get(streamId));
+      expect(streamDoc?.abortKind).toBe("interrupt");
+
+      const messages = await t.query(api.messages.list, { conversationId });
+      const partialMessages = messages.filter((m) => m.partial === true);
+      expect(partialMessages).toHaveLength(1);
+      expect(partialMessages[0].role).toBe("assistant");
+      expect(partialMessages[0].content).toBe("The answer is 42");
+      expect(partialMessages[0].partial).toBe(true);
+    });
+
+    it("does not persist a partial message when nothing was streamed", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const streamId = await t.mutation(api.stream.create, { conversationId });
+
+      await t.mutation(api.stream.abort, {
+        streamId,
+        reason: "User cancelled",
+      });
+
+      const messages = await t.query(api.messages.list, { conversationId });
+      expect(messages).toHaveLength(0);
+    });
+
+    it("does not persist a partial message for internal rotation aborts", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+
+      // Round 1 streams some content...
+      const firstStreamId = await t.mutation(api.stream.create, {
+        conversationId,
+      });
+      await t.mutation(api.stream.addDelta, {
+        streamId: firstStreamId,
+        start: 0,
+        end: 1,
+        parts: [{ type: "text-delta", text: "intermediate round" }],
+      });
+
+      // ...then the LLM requests a tool call and a new round starts
+      await t.mutation(api.stream.create, { conversationId });
+
+      // Rotated-out streams are recorded as "rotation"
+      const rotatedDoc = await t.run((ctx) => ctx.db.get(firstStreamId));
+      expect(rotatedDoc?.abortKind).toBe("rotation");
+
+      const messages = await t.query(api.messages.list, { conversationId });
+      expect(messages).toHaveLength(0);
+
+      // Old stream is aborted with the rotation reason
+      const state = await t.query(api.stream.getStreamForExternalId, {
+        conversationId,
+        externalId: "user:test",
+      });
+      expect(state?.status).toBe("streaming");
+    });
   });
 
   describe("abortByConversation", () => {

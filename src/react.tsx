@@ -97,6 +97,8 @@ export interface Message {
   content: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
   toolResults?: Array<{ toolCallId: string; result: string }>;
+  /** True when generation was interrupted mid-response (abort, timeout, error) */
+  partial?: boolean;
   createdAt: number;
 }
 

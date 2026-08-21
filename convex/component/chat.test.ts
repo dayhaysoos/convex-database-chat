@@ -1,10 +1,12 @@
 /// <reference types="vite/client" />
 import { describe, it, expect } from "vitest";
 import { convexTest } from "convex-test";
+import { getFunctionName } from "convex/server";
 import schema from "./schema";
 import { api } from "./_generated/api";
 import { executeToolWithContext } from "./toolExecution";
-import { buildMessagesWithTools } from "./chat";
+import { buildMessagesWithTools, capToolResult } from "./chat";
+import { DeltaStreamer } from "./deltaStreamer";
 import type { DatabaseChatTool } from "./tools";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -271,6 +273,72 @@ describe("databaseChat chat", () => {
 
       expect(result[1].content).toBeUndefined();
       expect(result[1].tool_calls).toHaveLength(1);
+    });
+  });
+
+  describe("capToolResult", () => {
+    it("passes small results through unchanged", () => {
+      const result = { items: [1, 2, 3] };
+      expect(capToolResult(result, 16000)).toBe(JSON.stringify(result));
+    });
+
+    it("truncates oversized results into a valid JSON envelope", () => {
+      const big = { items: "x".repeat(50000) };
+      const capped = capToolResult(big, 100);
+
+      const parsed = JSON.parse(capped);
+      expect(parsed.truncated).toBe(true);
+      expect(parsed.originalLength).toBeGreaterThan(100);
+      expect(parsed.data.length).toBe(100);
+    });
+  });
+
+  describe("DeltaStreamer rotation", () => {
+    function fakeMutationCtx() {
+      let streamCounter = 0;
+      const createdStreams: string[] = [];
+      const deltas: Array<{ start: number; end: number; parts: unknown[] }> = [];
+      const finished: string[] = [];
+
+      const ctx = {
+        runMutation: async (handler: unknown, args: any) => {
+          const name = getFunctionName(handler as any);
+          if (name === "stream:create") {
+            const id = `stream_${++streamCounter}` as any;
+            createdStreams.push(id);
+            return id;
+          }
+          if (name === "stream:addDelta") {
+            deltas.push(args);
+            return true;
+          }
+          if (name === "stream:finish" || name === "stream:abort") {
+            finished.push(name);
+            return null;
+          }
+          throw new Error("Unexpected mutation: " + name);
+        },
+      };
+
+      return { ctx, createdStreams, deltas, finished };
+    }
+
+    it("resetForNewRound starts a fresh stream and resets the cursor", async () => {
+      const { ctx, createdStreams, deltas } = fakeMutationCtx();
+      const conversationId = "conv1" as any;
+      const streamer = new DeltaStreamer(ctx as any, api, conversationId, {});
+
+      await streamer.addParts([{ type: "text-delta", text: "round one" }]);
+      await streamer.resetForNewRound();
+      await streamer.addParts([{ type: "text-delta", text: "round two" }]);
+
+      // Two distinct streams were created (rotation)
+      expect(createdStreams).toHaveLength(2);
+      expect(createdStreams[0]).not.toBe(createdStreams[1]);
+
+      // Cursor restarted at 0 for the new round
+      expect(deltas[0].start).toBe(0);
+      expect(deltas[1].start).toBe(0);
     });
   });
 
