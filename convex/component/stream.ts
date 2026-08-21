@@ -5,22 +5,31 @@ import {
   internalMutation,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type {
+  GenericDatabaseReader,
+  GenericDatabaseWriter,
+  GenericMutationCtx,
+} from "convex/server";
+import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import {
   requireConversationExternalId,
   requireStreamExternalId,
 } from "./access";
 
+/**
+ * Minimal context shapes shared by the streaming helpers. Typed against the
+ * component's DataModel so db reads/writes and index callbacks are checked.
+ */
+type ReadContext = { db: GenericDatabaseReader<DataModel> };
+type WriteContext = { db: GenericDatabaseWriter<DataModel> };
+type SchedulingContext = {
+  scheduler: GenericMutationCtx<DataModel>["scheduler"];
+};
+
 // Timeout configuration
 const TIMEOUT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DELTAS_PER_QUERY = 100;
 const CLEANUP_DELAY_MS = 30 * 1000; // 30 seconds - delay before deleting finished streams
-
-// Reason used when stream.create auto-aborts the previous stream because a
-// new one started. This is an internal rotation (e.g. between tool-calling
-// rounds), not a user-facing interruption, so partial content must NOT be
-// persisted for it.
-export const STREAM_ROTATION_ABORT_REASON = "New stream started";
 
 // Max deltas to scan when reconstructing partial content
 const MAX_DELTAS_FOR_RECOVERY = 500;
@@ -72,10 +81,13 @@ export const create = mutation({
         }
       }
 
-      // Abort the existing stream
+      // Abort the existing stream as an internal rotation (new tool round
+      // starting) - its deltas are intentionally discarded, so partial
+      // content must NOT be persisted for it.
       await ctx.db.patch(existingStream._id, {
         status: "aborted",
-        abortReason: STREAM_ROTATION_ABORT_REASON,
+        abortKind: "rotation",
+        abortReason: "New stream started",
         endedAt: Date.now(),
         timeoutFnId: undefined,
       });
@@ -242,6 +254,7 @@ export const abort = mutation({
     await ctx.db.patch(args.streamId, {
       status: "aborted",
       abortReason: args.reason,
+      abortKind: "interrupt",
       endedAt: Date.now(),
       timeoutFnId: undefined,
     });
@@ -444,6 +457,7 @@ export const timeoutStream = internalMutation({
     await ctx.db.patch(args.streamId, {
       status: "aborted",
       abortReason: "Timeout - no heartbeat received",
+      abortKind: "interrupt",
       endedAt: Date.now(),
       timeoutFnId: undefined,
     });
@@ -494,7 +508,7 @@ export const cleanupStream = internalMutation({
     // Check if there are still deltas remaining (very long stream)
     const remainingDeltas = await ctx.db
       .query("streamDeltas")
-      .withIndex("by_stream_cursor", (q: any) => q.eq("streamId", args.streamId))
+      .withIndex("by_stream_cursor", (q) => q.eq("streamId", args.streamId))
       .first();
 
     if (remainingDeltas) {
@@ -520,7 +534,7 @@ export const cleanupStream = internalMutation({
  * on very long streams. For typical streams, this deletes all deltas.
  */
 async function deleteStreamDeltas(
-  ctx: { db: any },
+  ctx: WriteContext,
   streamId: Id<"streamingMessages">
 ): Promise<void> {
   // Delete in batches to avoid hitting Convex mutation limits
@@ -529,7 +543,7 @@ async function deleteStreamDeltas(
   
   const deltas = await ctx.db
     .query("streamDeltas")
-    .withIndex("by_stream_cursor", (q: any) => q.eq("streamId", streamId))
+    .withIndex("by_stream_cursor", (q) => q.eq("streamId", streamId))
     .take(MAX_DELTAS_TO_DELETE);
 
   for (const delta of deltas) {
@@ -541,13 +555,13 @@ async function deleteStreamDeltas(
 }
 
 async function getStreamState(
-  ctx: { db: any },
+  ctx: ReadContext,
   conversationId: Id<"conversations">
 ) {
   // First, try to find an active streaming stream
   const activeStream = await ctx.db
     .query("streamingMessages")
-    .withIndex("by_conversation_status", (q: any) =>
+    .withIndex("by_conversation_status", (q) =>
       q.eq("conversationId", conversationId).eq("status", "streaming")
     )
     .first();
@@ -565,7 +579,7 @@ async function getStreamState(
   // If no active stream, find the most recent one (for status updates)
   const stream = await ctx.db
     .query("streamingMessages")
-    .withIndex("by_conversation", (q: any) =>
+    .withIndex("by_conversation", (q) =>
       q.eq("conversationId", conversationId)
     )
     .order("desc")
@@ -585,7 +599,7 @@ async function getStreamState(
 }
 
 async function listStreamDeltas(
-  ctx: { db: any },
+  ctx: ReadContext,
   streamId: Id<"streamingMessages">,
   cursor: number
 ) {
@@ -594,12 +608,12 @@ async function listStreamDeltas(
 
   const deltas = await ctx.db
     .query("streamDeltas")
-    .withIndex("by_stream_cursor", (q: any) =>
+    .withIndex("by_stream_cursor", (q) =>
       q.eq("streamId", streamId).gte("start", safeCursor)
     )
     .take(MAX_DELTAS_PER_QUERY);
 
-  return deltas.map((d: { start: number; end: number; parts: any }) => ({
+  return deltas.map((d) => ({
     start: d.start,
     end: d.end,
     parts: d.parts,
@@ -607,13 +621,13 @@ async function listStreamDeltas(
 }
 
 async function abortStreamByConversationId(
-  ctx: { db: any; scheduler: any },
+  ctx: WriteContext & SchedulingContext,
   conversationId: Id<"conversations">,
   reason: string
 ) {
   const stream = await ctx.db
     .query("streamingMessages")
-    .withIndex("by_conversation_status", (q: any) =>
+    .withIndex("by_conversation_status", (q) =>
       q.eq("conversationId", conversationId).eq("status", "streaming")
     )
     .first();
@@ -635,6 +649,7 @@ async function abortStreamByConversationId(
   await ctx.db.patch(stream._id, {
     status: "aborted",
     abortReason: reason,
+    abortKind: "interrupt",
     endedAt: Date.now(),
     timeoutFnId: undefined,
   });
@@ -657,26 +672,20 @@ async function abortStreamByConversationId(
  * Helper: Reconstruct partially streamed text from deltas and save it as a
  * partial assistant message. Called before deltas are deleted on genuine
  * interruptions (user abort, timeout, error) so user-visible content isn't
- * lost. Skipped for internal rotations (new round of a tool loop) and when
- * nothing was streamed.
+ * lost. Rotation aborts ("rotation" kind - internal tool-loop rounds) are
+ * skipped: their deltas are discarded by design.
  */
 async function persistPartialContent(
-  ctx: { db: any },
-  stream: {
-    _id: Id<"streamingMessages">;
-    conversationId: Id<"conversations">;
-    abortReason?: string;
-  }
+  ctx: WriteContext,
+  stream: Doc<"streamingMessages">
 ): Promise<void> {
-  if (stream.abortReason === STREAM_ROTATION_ABORT_REASON) {
+  if (stream.abortKind === "rotation") {
     return;
   }
 
   const deltas = await ctx.db
     .query("streamDeltas")
-    .withIndex("by_stream_cursor", (q: any) =>
-      q.eq("streamId", stream._id)
-    )
+    .withIndex("by_stream_cursor", (q) => q.eq("streamId", stream._id))
     .take(MAX_DELTAS_FOR_RECOVERY);
 
   let text = "";

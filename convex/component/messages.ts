@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { GenericDatabaseReader } from "convex/server";
+import type { DataModel, Id } from "./_generated/dataModel";
 import { requireConversationExternalId } from "./access";
+
+/** Minimal read-only context shape for the message helpers. */
+type ReadContext = { db: GenericDatabaseReader<DataModel> };
 
 // Shared validators
 const toolCallValidator = v.object({
@@ -20,6 +24,21 @@ const messageRoleValidator = v.union(
   v.literal("assistant"),
   v.literal("tool")
 );
+
+/**
+ * Shape of a stored message, shared by every query that returns messages.
+ */
+const messageValidator = {
+  _id: v.id("messages"),
+  _creationTime: v.number(),
+  conversationId: v.id("conversations"),
+  role: messageRoleValidator,
+  content: v.string(),
+  toolCalls: v.optional(v.array(toolCallValidator)),
+  toolResults: v.optional(v.array(toolResultValidator)),
+  partial: v.optional(v.boolean()),
+  createdAt: v.number(),
+};
 
 /**
  * Add a message to a conversation
@@ -67,19 +86,7 @@ export const list = query({
     conversationId: v.id("conversations"),
     limit: v.optional(v.number()),
   },
-  returns: v.array(
-    v.object({
-      _id: v.id("messages"),
-      _creationTime: v.number(),
-      conversationId: v.id("conversations"),
-      role: messageRoleValidator,
-      content: v.string(),
-      toolCalls: v.optional(v.array(toolCallValidator)),
-      toolResults: v.optional(v.array(toolResultValidator)),
-      partial: v.optional(v.boolean()),
-      createdAt: v.number(),
-    })
-  ),
+  returns: v.array(v.object(messageValidator)),
   handler: async (ctx, args) => {
     return await listMessages(ctx, args.conversationId, args.limit);
   },
@@ -95,19 +102,7 @@ export const listForExternalId = query({
     externalId: v.string(),
     limit: v.optional(v.number()),
   },
-  returns: v.array(
-    v.object({
-      _id: v.id("messages"),
-      _creationTime: v.number(),
-      conversationId: v.id("conversations"),
-      role: messageRoleValidator,
-      content: v.string(),
-      toolCalls: v.optional(v.array(toolCallValidator)),
-      toolResults: v.optional(v.array(toolResultValidator)),
-      partial: v.optional(v.boolean()),
-      createdAt: v.number(),
-    })
-  ),
+  returns: v.array(v.object(messageValidator)),
   handler: async (ctx, args) => {
     await requireConversationExternalId(
       ctx,
@@ -125,20 +120,7 @@ export const getLatest = query({
   args: {
     conversationId: v.id("conversations"),
   },
-  returns: v.union(
-    v.object({
-      _id: v.id("messages"),
-      _creationTime: v.number(),
-      conversationId: v.id("conversations"),
-      role: messageRoleValidator,
-      content: v.string(),
-      toolCalls: v.optional(v.array(toolCallValidator)),
-      toolResults: v.optional(v.array(toolResultValidator)),
-      partial: v.optional(v.boolean()),
-      createdAt: v.number(),
-    }),
-    v.null()
-  ),
+  returns: v.union(v.object(messageValidator), v.null()),
   handler: async (ctx, args) => {
     return await getLatestMessage(ctx, args.conversationId);
   },
@@ -153,20 +135,7 @@ export const getLatestForExternalId = query({
     conversationId: v.id("conversations"),
     externalId: v.string(),
   },
-  returns: v.union(
-    v.object({
-      _id: v.id("messages"),
-      _creationTime: v.number(),
-      conversationId: v.id("conversations"),
-      role: messageRoleValidator,
-      content: v.string(),
-      toolCalls: v.optional(v.array(toolCallValidator)),
-      toolResults: v.optional(v.array(toolResultValidator)),
-      partial: v.optional(v.boolean()),
-      createdAt: v.number(),
-    }),
-    v.null()
-  ),
+  returns: v.union(v.object(messageValidator), v.null()),
   handler: async (ctx, args) => {
     await requireConversationExternalId(
       ctx,
@@ -178,7 +147,7 @@ export const getLatestForExternalId = query({
 });
 
 async function listMessages(
-  ctx: { db: any },
+  ctx: ReadContext,
   conversationId: Id<"conversations">,
   rawLimit?: number
 ) {
@@ -191,7 +160,7 @@ async function listMessages(
   // Fetch most recent N messages (desc order), then reverse for chronological display
   const messages = await ctx.db
     .query("messages")
-    .withIndex("by_conversation", (q: any) => q.eq("conversationId", conversationId))
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
     .order("desc")
     .take(limit);
 
@@ -199,12 +168,12 @@ async function listMessages(
 }
 
 async function getLatestMessage(
-  ctx: { db: any },
+  ctx: ReadContext,
   conversationId: Id<"conversations">
 ) {
   return await ctx.db
     .query("messages")
-    .withIndex("by_conversation", (q: any) => q.eq("conversationId", conversationId))
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
     .order("desc")
     .first();
 }

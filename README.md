@@ -1329,6 +1329,14 @@ already streamed is persisted as an assistant message with `partial: true` so
 partial responses aren't lost. (Intermediate rounds of tool-calling loops are
 not streamed or persisted - only the final answer is.)
 
+Known limitations:
+
+- If the final round of a tool loop fails before streaming any text, content
+  from intermediate rounds cannot be recovered (it is discarded by design when
+  rounds rotate).
+- Abort detection during tool execution lands at the next tool-loop boundary;
+  a long-running individual tool call cannot be interrupted mid-flight.
+
 ---
 
 ## Railway Deployments

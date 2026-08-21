@@ -53,6 +53,13 @@ export default defineSchema({
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
     abortReason: v.optional(v.string()),
+    // Distinguishes why a stream aborted: "rotation" streams are internal
+    // tool-loop rounds whose deltas are intentionally discarded; "interrupt"
+    // streams were stopped externally (user, timeout, error) and their
+    // partial content should be persisted. Absent on finished streams.
+    abortKind: v.optional(
+      v.union(v.literal("rotation"), v.literal("interrupt"))
+    ),
     // Timeout handling - heartbeat updated on each delta write
     lastHeartbeat: v.number(),
     timeoutFnId: v.optional(v.id("_scheduled_functions")),

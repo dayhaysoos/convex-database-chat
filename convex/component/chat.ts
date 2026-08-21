@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { GenericActionCtx } from "convex/server";
+import type { DataModel, Id } from "./_generated/dataModel";
 import {
   databaseChatToolValidator,
   formatToolsForLLM,
@@ -99,7 +100,7 @@ export const sendForExternalId = action({
 });
 
 async function sendInternal(
-  ctx: any,
+  ctx: GenericActionCtx<DataModel>,
   args: {
     conversationId: Id<"conversations">;
     message: string;
@@ -121,7 +122,7 @@ async function sendInternal(
 ) {
   const { conversationId, message, config } = args;
   const tools = (config.tools ?? []) as DatabaseChatTool[];
-  const maxToolLoops = config.maxToolLoops ?? 5;
+  const maxToolLoops = config.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS;
   const maxToolResultChars = config.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
   const executedToolCalls: Array<{
     name: string;
@@ -131,7 +132,7 @@ async function sendInternal(
 
   // Create DeltaStreamer for efficient streaming (O(n) instead of O(n²) bandwidth)
   const streamer = new DeltaStreamer(ctx, api, conversationId, {
-    throttleMs: config.streamThrottleMs ?? 100,
+    throttleMs: config.streamThrottleMs ?? DEFAULT_STREAM_THROTTLE_MS,
     onAbort: async (reason) => {
       console.warn("Stream aborted:", reason);
     },
@@ -175,8 +176,10 @@ async function sendInternal(
         await streamer.addParts([{ type: "text-delta", text: delta }]);
       },
       abortSignal: streamer.abortController.signal,
-      httpReferer: config.httpReferer,
-      xTitle: config.xTitle,
+      attribution: {
+        httpReferer: config.httpReferer,
+        xTitle: config.xTitle,
+      },
     });
 
     // 6. Handle tool calls (loop until no more tool calls)
@@ -201,6 +204,9 @@ async function sendInternal(
         streamState.status !== "streaming" ||
         streamState.streamId !== activeStreamId
       ) {
+        // Mark our controller aborted so the catch block's fail() is a no-op
+        // and the fetch in flight (if any) gets cancelled.
+        streamer.abortController.abort();
         throw new Error("Stream aborted");
       }
 
@@ -297,9 +303,11 @@ async function sendInternal(
       );
 
       // Discard this round's streamed content - only the final round's text
-      // should reach clients. This rotates to a fresh stream; the previous
-      // one is aborted (and its deltas cleaned up) when the new one is created.
+      // should reach clients. Rotate eagerly: abort the old stream and create
+      // the next one up front, so the loop-top liveness check below never has
+      // to create a stream as a side effect.
       await streamer.resetForNewRound();
+      await streamer.getStreamId();
 
       // Call LLM again with tool results
       response = await callOpenRouter({
@@ -311,8 +319,10 @@ async function sendInternal(
           await streamer.addParts([{ type: "text-delta", text: delta }]);
         },
         abortSignal: streamer.abortController.signal,
-        httpReferer: config.httpReferer,
-        xTitle: config.xTitle,
+        attribution: {
+          httpReferer: config.httpReferer,
+          xTitle: config.xTitle,
+        },
       });
     }
 
@@ -350,6 +360,16 @@ If you don't have access to a tool that can answer the question, say so.
 Always explain what you found in a clear, helpful way.`;
 
 const DEFAULT_MAX_TOOL_RESULT_CHARS = 16000;
+const DEFAULT_MAX_TOOL_LOOPS = 5;
+const DEFAULT_STREAM_THROTTLE_MS = 100;
+
+/**
+ * OpenRouter attribution headers (HTTP-Referer / X-Title).
+ */
+interface OpenRouterAttribution {
+  httpReferer?: string;
+  xTitle?: string;
+}
 
 /**
  * Serialize a tool result for the LLM, truncating oversized results so a
@@ -460,10 +480,8 @@ async function callOpenRouter(options: {
   onChunk: (delta: string) => Promise<void>;
   /** Optional abort signal to cancel the request */
   abortSignal?: AbortSignal;
-  /** OpenRouter attribution: HTTP-Referer header */
-  httpReferer?: string;
-  /** OpenRouter attribution: X-Title header */
-  xTitle?: string;
+  /** OpenRouter attribution headers */
+  attribution?: OpenRouterAttribution;
 }): Promise<{
   content: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
@@ -486,8 +504,8 @@ async function callOpenRouter(options: {
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": options.httpReferer ?? DEFAULT_HTTP_REFERER,
-        "X-Title": options.xTitle ?? DEFAULT_X_TITLE,
+        "HTTP-Referer": options.attribution?.httpReferer ?? DEFAULT_HTTP_REFERER,
+        "X-Title": options.attribution?.xTitle ?? DEFAULT_X_TITLE,
       },
       body: JSON.stringify(body),
       signal: options.abortSignal,

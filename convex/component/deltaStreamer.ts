@@ -1,6 +1,6 @@
 import type { GenericActionCtx } from "convex/server";
 import type { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { DataModel, Id } from "./_generated/dataModel";
 
 /**
  * A part of the stream - matches AI SDK's UIMessageChunk format for compatibility
@@ -56,7 +56,7 @@ export class DeltaStreamer {
   public readonly abortController: AbortController;
 
   constructor(
-    private ctx: GenericActionCtx<any>,
+    private ctx: GenericActionCtx<DataModel>,
     private component: typeof api,
     private conversationId: Id<"conversations">,
     config: DeltaStreamerConfig = {}
@@ -153,9 +153,18 @@ export class DeltaStreamer {
       }
       this.ongoingWrite = undefined;
     }
+    if (this.creatingStreamPromise) {
+      try {
+        // Await any in-flight creation so it can't resolve later and
+        // reassign a stale streamId over the reset.
+        await this.creatingStreamPromise;
+      } catch {
+        // Creation failures are handled by the caller
+      }
+      this.creatingStreamPromise = undefined;
+    }
     this.nextParts = [];
     this.streamId = undefined;
-    this.creatingStreamPromise = undefined;
     this.cursor = 0;
     this.latestWrite = 0;
   }

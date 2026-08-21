@@ -358,5 +358,34 @@ describe("DatabaseChatClient", () => {
 
       expect(calls[0].args.externalId).toBe("user:explicit");
     });
+
+    it("passes config overrides through to chat.send", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:resolved",
+        maxToolResultChars: 100,
+      });
+
+      const calls: Array<{ name: string; args: any }> = [];
+      const ctx = {
+        runAction: async (handler: unknown, args: any) => {
+          calls.push({ name: getFunctionName(handler as any), args });
+          return { success: true };
+        },
+      } as any;
+
+      await client.send(ctx, {
+        conversationId: "conv123" as any,
+        message: "hello",
+        apiKey: "key",
+        maxToolLoops: 2,
+        streamThrottleMs: 50,
+        maxToolResultChars: 200,
+      });
+
+      const config = calls[0].args.config;
+      expect(config.maxToolLoops).toBe(2);
+      expect(config.streamThrottleMs).toBe(50);
+      expect(config.maxToolResultChars).toBe(200);
+    });
   });
 });
