@@ -138,6 +138,29 @@ export class DeltaStreamer {
   }
 
   /**
+   * Reset streamer state so the next write starts a fresh stream.
+   * Used between tool-calling rounds: only the final round's text should be
+   * streamed to clients. The previous stream is aborted (and its deltas
+   * deleted) automatically by stream.create when the new stream is created,
+   * which also triggers a client-side reset since the streamId changes.
+   */
+  async resetForNewRound(): Promise<void> {
+    if (this.ongoingWrite) {
+      try {
+        await this.ongoingWrite;
+      } catch {
+        // A failed write on the old stream shouldn't block rotation
+      }
+      this.ongoingWrite = undefined;
+    }
+    this.nextParts = [];
+    this.streamId = undefined;
+    this.creatingStreamPromise = undefined;
+    this.cursor = 0;
+    this.latestWrite = 0;
+  }
+
+  /**
    * Finish the stream successfully. Flushes any remaining parts.
    */
   async finish(): Promise<void> {

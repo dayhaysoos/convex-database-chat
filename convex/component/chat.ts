@@ -30,6 +30,8 @@ const sendConfigValidator = v.object({
   maxToolLoops: v.optional(v.number()),
   // Minimum ms between stream delta writes (default: 100)
   streamThrottleMs: v.optional(v.number()),
+  // Max characters of a serialized tool result sent to the LLM (default: 16000)
+  maxToolResultChars: v.optional(v.number()),
   // OpenRouter attribution headers (sent as HTTP-Referer / X-Title)
   httpReferer: v.optional(v.string()),
   xTitle: v.optional(v.string()),
@@ -111,6 +113,7 @@ async function sendInternal(
       toolContext?: Record<string, unknown>;
       maxToolLoops?: number;
       streamThrottleMs?: number;
+      maxToolResultChars?: number;
       httpReferer?: string;
       xTitle?: string;
     };
@@ -119,6 +122,7 @@ async function sendInternal(
   const { conversationId, message, config } = args;
   const tools = (config.tools ?? []) as DatabaseChatTool[];
   const maxToolLoops = config.maxToolLoops ?? 5;
+  const maxToolResultChars = config.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
   const executedToolCalls: Array<{
     name: string;
     args: unknown;
@@ -233,7 +237,7 @@ async function sendInternal(
           );
           toolResults.push({
             toolCallId: toolCall.id,
-            result: JSON.stringify(result),
+            result: capToolResult(result, maxToolResultChars),
           });
           executedToolCalls.push({
             name: toolCall.name,
@@ -275,6 +279,11 @@ async function sendInternal(
         updatedMessages,
         systemPrompt
       );
+
+      // Discard this round's streamed content - only the final round's text
+      // should reach clients. This rotates to a fresh stream; the previous
+      // one is aborted (and its deltas cleaned up) when the new one is created.
+      await streamer.resetForNewRound();
 
       // Call LLM again with tool results
       response = await callOpenRouter({
@@ -323,6 +332,25 @@ const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant that can search and q
 When users ask questions, use the available tools to find relevant information.
 If you don't have access to a tool that can answer the question, say so.
 Always explain what you found in a clear, helpful way.`;
+
+const DEFAULT_MAX_TOOL_RESULT_CHARS = 16000;
+
+/**
+ * Serialize a tool result for the LLM, truncating oversized results so a
+ * single large payload can't blow up the context window. The returned value
+ * is always valid JSON.
+ */
+export function capToolResult(result: unknown, maxChars: number): string {
+  const json = JSON.stringify(result);
+  if (json.length <= maxChars) {
+    return json;
+  }
+  return JSON.stringify({
+    truncated: true,
+    originalLength: json.length,
+    data: json.slice(0, maxChars),
+  });
+}
 
 /**
  * Build messages array for OpenRouter API, preserving tool calls and results
