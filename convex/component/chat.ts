@@ -26,6 +26,13 @@ const sendConfigValidator = v.object({
   // Max messages to include in LLM context (default: 50)
   maxMessagesForLLM: v.optional(v.number()),
   toolContext: v.optional(v.any()),
+  // Max tool-calling rounds per message before giving up (default: 5)
+  maxToolLoops: v.optional(v.number()),
+  // Minimum ms between stream delta writes (default: 100)
+  streamThrottleMs: v.optional(v.number()),
+  // OpenRouter attribution headers (sent as HTTP-Referer / X-Title)
+  httpReferer: v.optional(v.string()),
+  xTitle: v.optional(v.string()),
 });
 
 const sendReturnValidator = v.object({
@@ -102,11 +109,16 @@ async function sendInternal(
       tools?: DatabaseChatTool[];
       maxMessagesForLLM?: number;
       toolContext?: Record<string, unknown>;
+      maxToolLoops?: number;
+      streamThrottleMs?: number;
+      httpReferer?: string;
+      xTitle?: string;
     };
   }
 ) {
   const { conversationId, message, config } = args;
   const tools = (config.tools ?? []) as DatabaseChatTool[];
+  const maxToolLoops = config.maxToolLoops ?? 5;
   const executedToolCalls: Array<{
     name: string;
     args: unknown;
@@ -115,7 +127,7 @@ async function sendInternal(
 
   // Create DeltaStreamer for efficient streaming (O(n) instead of O(n²) bandwidth)
   const streamer = new DeltaStreamer(ctx, api, conversationId, {
-    throttleMs: 100,
+    throttleMs: config.streamThrottleMs ?? 100,
     onAbort: async (reason) => {
       console.warn("Stream aborted:", reason);
     },
@@ -145,7 +157,7 @@ async function sendInternal(
       tools,
       { toolGuidance: config.toolGuidance }
     );
-    const openRouterMessages = buildMessages(messages, systemPrompt);
+    const openRouterMessages = buildMessagesWithTools(messages, systemPrompt);
 
     // 5. Call OpenRouter with streaming (and tools if provided)
     // DeltaStreamer batches token writes for efficiency
@@ -159,16 +171,17 @@ async function sendInternal(
         await streamer.addParts([{ type: "text-delta", text: delta }]);
       },
       abortSignal: streamer.abortController.signal,
+      httpReferer: config.httpReferer,
+      xTitle: config.xTitle,
     });
 
     // 6. Handle tool calls (loop until no more tool calls)
     let loopCount = 0;
-    const MAX_TOOL_LOOPS = 5; // Prevent infinite loops
 
     while (
       response.toolCalls &&
       response.toolCalls.length > 0 &&
-      loopCount < MAX_TOOL_LOOPS &&
+      loopCount < maxToolLoops &&
       !streamer.abortController.signal.aborted
     ) {
       loopCount++;
@@ -273,6 +286,8 @@ async function sendInternal(
           await streamer.addParts([{ type: "text-delta", text: delta }]);
         },
         abortSignal: streamer.abortController.signal,
+        httpReferer: config.httpReferer,
+        xTitle: config.xTitle,
       });
     }
 
@@ -310,34 +325,10 @@ If you don't have access to a tool that can answer the question, say so.
 Always explain what you found in a clear, helpful way.`;
 
 /**
- * Build messages array for OpenRouter API (without tools)
+ * Build messages array for OpenRouter API, preserving tool calls and results
+ * so multi-turn conversations replay faithfully.
  */
-function buildMessages(
-  messages: Array<{
-    role: "user" | "assistant" | "tool";
-    content: string;
-    toolCalls?: Array<{ id: string; name: string; arguments: string }>;
-    toolResults?: Array<{ toolCallId: string; result: string }>;
-  }>,
-  systemPrompt: string
-): Array<{ role: string; content: string }> {
-  const result: Array<{ role: string; content: string }> = [
-    { role: "system", content: systemPrompt },
-  ];
-
-  for (const msg of messages) {
-    if (msg.role === "user" || msg.role === "assistant") {
-      result.push({ role: msg.role, content: msg.content });
-    }
-  }
-
-  return result;
-}
-
-/**
- * Build messages array for OpenRouter API (with tool calls and results)
- */
-function buildMessagesWithTools(
+export function buildMessagesWithTools(
   messages: Array<{
     role: "user" | "assistant" | "tool";
     content: string;
@@ -402,6 +393,9 @@ function buildMessagesWithTools(
   return result;
 }
 
+const DEFAULT_HTTP_REFERER = "https://github.com/dayhaysoos/convex-database-chat";
+const DEFAULT_X_TITLE = "DatabaseChat";
+
 /**
  * Call OpenRouter API with streaming (and optional tools)
  */
@@ -422,6 +416,10 @@ async function callOpenRouter(options: {
   onChunk: (delta: string) => Promise<void>;
   /** Optional abort signal to cancel the request */
   abortSignal?: AbortSignal;
+  /** OpenRouter attribution: HTTP-Referer header */
+  httpReferer?: string;
+  /** OpenRouter attribution: X-Title header */
+  xTitle?: string;
 }): Promise<{
   content: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
@@ -444,8 +442,8 @@ async function callOpenRouter(options: {
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/convex-dev/database-chat",
-        "X-Title": "DatabaseChat",
+        "HTTP-Referer": options.httpReferer ?? DEFAULT_HTTP_REFERER,
+        "X-Title": options.xTitle ?? DEFAULT_X_TITLE,
       },
       body: JSON.stringify(body),
       signal: options.abortSignal,

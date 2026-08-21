@@ -128,6 +128,23 @@ export interface DatabaseChatConfig {
    * Uses the most recent N messages for conversation history.
    */
   maxMessagesForLLM?: number;
+  /**
+   * Maximum tool-calling rounds per message before giving up (default: 5).
+   */
+  maxToolLoops?: number;
+  /**
+   * Minimum ms between stream delta writes (default: 100).
+   */
+  streamThrottleMs?: number;
+  /**
+   * OpenRouter attribution header (HTTP-Referer). Identifies your app to
+   * OpenRouter. Defaults to the package repository URL.
+   */
+  httpReferer?: string;
+  /**
+   * OpenRouter attribution header (X-Title). Defaults to "DatabaseChat".
+   */
+  xTitle?: string;
 }
 
 export interface SendMessageOptions {
@@ -143,6 +160,10 @@ export interface SendMessageOptions {
   toolGuidance?: ToolGuidanceOption;
   /** Server-side context merged into tool args (not exposed to LLM) */
   toolContext?: Record<string, unknown>;
+  /** Override max tool-calling rounds for this message */
+  maxToolLoops?: number;
+  /** Override stream throttle for this message */
+  streamThrottleMs?: number;
 }
 
 export interface SendMessageResult {
@@ -361,6 +382,11 @@ export class DatabaseChatClient {
         tools: this.tools.length > 0 ? this.tools : undefined,
         maxMessagesForLLM: this.config.maxMessagesForLLM ?? 50,
         toolContext: options.toolContext,
+        maxToolLoops: options.maxToolLoops ?? this.config.maxToolLoops,
+        streamThrottleMs:
+          options.streamThrottleMs ?? this.config.streamThrottleMs,
+        httpReferer: this.config.httpReferer,
+        xTitle: this.config.xTitle,
       },
     });
   }
