@@ -817,25 +817,26 @@ export function useSmoothText(
       );
 
       if (visibleLengthRef.current < target.length) {
-        const newLength = Math.min(
-          visibleLengthRef.current + charsToAdd,
-          target.length
-        );
-
-        // Adapt speed based on how fast text is arriving
-        if (newLength < target.length) {
-          // We're behind, speed up
+        // Adapt speed based on how far behind we are relative to the target
+        const charsBehind = target.length - visibleLengthRef.current;
+        if (charsBehind > 50) {
+          // Far behind, speed up to catch up with text arrival
           charsPerSecondRef.current = Math.min(
             charsPerSecondRef.current * 1.1,
             1000
           );
-        } else if (target.length - visibleLengthRef.current < 10) {
-          // We're catching up, slow down slightly
+        } else if (charsBehind < 10) {
+          // Nearly caught up, ease off slightly for a natural finish
           charsPerSecondRef.current = Math.max(
             charsPerSecondRef.current * 0.95,
             initialCharsPerSecond / 2
           );
         }
+
+        const newLength = Math.min(
+          visibleLengthRef.current + charsToAdd,
+          target.length
+        );
 
         visibleLengthRef.current = newLength;
         setVisibleText(target.slice(0, newLength));
