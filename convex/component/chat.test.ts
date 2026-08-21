@@ -4,6 +4,7 @@ import { convexTest } from "convex-test";
 import schema from "./schema";
 import { api } from "./_generated/api";
 import { executeToolWithContext } from "./toolExecution";
+import { buildMessagesWithTools } from "./chat";
 import type { DatabaseChatTool } from "./tools";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -174,6 +175,102 @@ describe("databaseChat chat", () => {
         externalId: "user:1",
       });
       expect(args).toEqual(result);
+    });
+  });
+
+  describe("buildMessagesWithTools", () => {
+    it("preserves tool calls and results in conversation history", () => {
+      const messages = [
+        { role: "user" as const, content: "Find React candidates" },
+        {
+          role: "assistant" as const,
+          content: "",
+          toolCalls: [
+            { id: "call_1", name: "searchRecords", arguments: '{"query":"react"}' },
+          ],
+        },
+        {
+          role: "tool" as const,
+          content: "",
+          toolResults: [
+            {
+              toolCallId: "call_1",
+              result: '[{"id":"1","name":"Alice"}]',
+            },
+          ],
+        },
+        {
+          role: "assistant" as const,
+          content: "I found Alice.",
+        },
+      ];
+
+      const result = buildMessagesWithTools(messages, "system prompt");
+
+      expect(result).toHaveLength(5);
+      expect(result[0]).toEqual({ role: "system", content: "system prompt" });
+      expect(result[1]).toEqual({
+        role: "user",
+        content: "Find React candidates",
+      });
+
+      // Assistant message with tool calls must replay its tool_calls
+      expect(result[2]).toEqual({
+        role: "assistant",
+        content: undefined,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "searchRecords",
+              arguments: '{"query":"react"}',
+            },
+          },
+        ],
+      });
+
+      // Tool results must carry their tool_call_id
+      expect(result[3]).toEqual({
+        role: "tool",
+        content: '[{"id":"1","name":"Alice"}]',
+        tool_call_id: "call_1",
+      });
+
+      expect(result[4]).toEqual({
+        role: "assistant",
+        content: "I found Alice.",
+      });
+    });
+
+    it("replays plain assistant messages without tool_calls", () => {
+      const messages = [
+        { role: "assistant" as const, content: "Hello!" },
+      ];
+
+      const result = buildMessagesWithTools(messages, "sys");
+
+      expect(result).toEqual([
+        { role: "system", content: "sys" },
+        { role: "assistant", content: "Hello!" },
+      ]);
+    });
+
+    it("omits empty assistant content when tool calls are present", () => {
+      const messages = [
+        {
+          role: "assistant" as const,
+          content: "",
+          toolCalls: [
+            { id: "c1", name: "t", arguments: "{}" },
+          ],
+        },
+      ];
+
+      const result = buildMessagesWithTools(messages, "sys");
+
+      expect(result[1].content).toBeUndefined();
+      expect(result[1].tool_calls).toHaveLength(1);
     });
   });
 
