@@ -16,6 +16,13 @@ const chat = defineDatabaseChat(components.databaseChat, {
   tools,
   maxMessagesForDisplay: 100,
   maxMessagesForLLM: 50,
+  // Recommended: resolve identity server-side once, and every method
+  // routes through ownership-checked endpoints automatically.
+  getExternalId: async (ctx) => {
+    const userId = await getAuthUserId(ctx); // your auth
+    if (!userId) throw new Error("Unauthorized");
+    return `user:${userId}`;
+  },
 });
 ```
 
@@ -31,6 +38,24 @@ const chat = defineDatabaseChat(components.databaseChat, {
 - `maxMessagesForDisplay`: default message limit for `getMessages` (default:
   100).
 - `maxMessagesForLLM`: default message limit for LLM context (default: 50).
+- `maxToolLoops`: maximum tool-calling rounds per message before giving up
+  (default: 5).
+- `streamThrottleMs`: minimum ms between stream delta writes (default: 100).
+- `maxToolResultChars`: max characters of a serialized tool result sent to the
+  LLM (default: 16000). Oversized results are truncated and flagged with
+  `{ truncated: true }`.
+- `httpReferer` / `xTitle`: OpenRouter attribution headers.
+- `getExternalId`: async resolver called inside your app's Convex functions to
+  derive the caller's `externalId`. Works with Convex Auth, Clerk, or any
+  identity provider.
+
+<Callout title="Identity is required">
+  Data-access methods throw when no identity can be resolved - neither a
+  configured `getExternalId` nor an explicit server-derived `externalId`
+  argument. This prevents accidentally skipping access control. Raw component
+  endpoints remain available for advanced setups; see
+  [Security & Multi-tenant Access](/guides/chat-integration).
+</Callout>
 
 ## `autoTools` shape
 
@@ -53,14 +78,26 @@ autoTools: {
 
 ## Common methods
 
-- `createConversation(ctx, { externalId, title? })`
-- `getConversation(ctx, conversationId)`
-- `listConversations(ctx, externalId)`
-- `getMessages(ctx, conversationId)`
-- `getStreamState(ctx, conversationId)`
-- `getStreamDeltas(ctx, streamId, cursor)`
-- `abortStream(ctx, conversationId, reason?)`
-- `send(ctx, { conversationId, message, apiKey, model?, systemPrompt?, toolGuidance?, toolContext? })`
+All data-access methods accept an optional `{ externalId }` override (must be
+derived server-side, never from client input) and route through
+ownership-checked endpoints when identity is resolvable.
+
+- `createConversation(ctx, { externalId?, title? })`
+- `getConversation(ctx, conversationId, { externalId? }?)`
+- `listConversations(ctx, externalId?)`
+- `getMessages(ctx, conversationId, { externalId?, limit? }?)`
+- `getStreamState(ctx, conversationId, { externalId? }?)`
+- `getStreamDeltas(ctx, streamId, cursor, { externalId? }?)`
+- `abortStream(ctx, conversationId, reason?, { externalId? }?)`
+- `send(ctx, { conversationId, message, apiKey, model?, systemPrompt?, toolGuidance?, toolContext?, externalId?, maxToolLoops?, streamThrottleMs?, maxToolResultChars? })`
+
+`send` always routes through the scoped `chat.sendForExternalId` action.
+
+### Streaming behavior
+
+- Only the final round of a tool-calling loop streams to clients.
+- If generation is interrupted (user abort, timeout, error), content streamed
+  so far is persisted as an assistant message with `partial: true`.
 
 ## Advanced methods
 
