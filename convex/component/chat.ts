@@ -188,6 +188,22 @@ async function sendInternal(
       loopCount < maxToolLoops &&
       !streamer.abortController.signal.aborted
     ) {
+      // Detect external aborts that happened while no deltas were being
+      // written (tool-call generation, tool execution). Without this check,
+      // a user pressing Stop during those windows goes unnoticed: the loop
+      // rotates to a fresh stream and generation continues as a zombie.
+      const activeStreamId = await streamer.getStreamId();
+      const streamState = await ctx.runQuery(api.stream.getStream, {
+        conversationId,
+      });
+      if (
+        !streamState ||
+        streamState.status !== "streaming" ||
+        streamState.streamId !== activeStreamId
+      ) {
+        throw new Error("Stream aborted");
+      }
+
       loopCount++;
 
       // Execute each tool call
