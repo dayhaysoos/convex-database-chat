@@ -62,6 +62,8 @@ const sendConfigValidator = v.object({
   xTitle: v.optional(v.string()),
   maxRetries: v.optional(v.number()),
   requestTimeoutMs: v.optional(v.number()),
+  baseDelayMs: v.optional(v.number()),
+  maxDelayMs: v.optional(v.number()),
   validateResultContract: v.optional(
     v.union(
       v.literal("off"),
@@ -157,6 +159,8 @@ async function sendInternal(
       xTitle?: string;
       maxRetries?: number;
       requestTimeoutMs?: number;
+      baseDelayMs?: number;
+      maxDelayMs?: number;
       validateResultContract?: ResultContractValidation;
     };
   }
@@ -199,6 +203,8 @@ async function sendInternal(
       },
       maxRetries: config.maxRetries,
       requestTimeoutMs: config.requestTimeoutMs,
+      baseDelayMs: config.baseDelayMs,
+      maxDelayMs: config.maxDelayMs,
     });
 
   try {

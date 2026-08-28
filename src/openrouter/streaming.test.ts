@@ -4,31 +4,9 @@ import {
   streamChatCompletion,
   type StreamChatCompletionOptions,
 } from "./streaming.js";
+import { contentChunk, sseData, sseResponse } from "../testing/sse.js";
 
 const encoder = new TextEncoder();
-
-function sseData(payload: unknown): string {
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
-function contentChunk(text: string): string {
-  return sseData({ choices: [{ delta: { content: text } }] });
-}
-
-function sseResponse(chunks: string[]): Response {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(chunk));
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream" },
-  });
-}
 
 function hangingResponse(init?: { signal?: AbortSignal }): Response {
   const stream = new ReadableStream<Uint8Array>({

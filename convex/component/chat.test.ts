@@ -7,55 +7,13 @@ import { api } from "./_generated/api";
 import { executeToolWithContext } from "./toolExecution";
 import { buildMessagesWithTools, capToolResult } from "./chat";
 import { DeltaStreamer } from "./deltaStreamer";
+import {
+  contentChunk,
+  sseResponse,
+  toolCallChunk,
+} from "../../src/testing/sse.js";
 import type { DatabaseChatTool } from "./tools";
 
-const encoder = new TextEncoder();
-
-function sseData(payload: unknown): string {
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
-function contentChunk(text: string): string {
-  return sseData({ choices: [{ delta: { content: text } }] });
-}
-
-function toolCallChunk(
-  id: string,
-  name: string,
-  argsJson: string
-): string {
-  return sseData({
-    choices: [
-      {
-        delta: {
-          tool_calls: [
-            {
-              index: 0,
-              id,
-              type: "function",
-              function: { name, arguments: argsJson },
-            },
-          ],
-        },
-      },
-    ],
-  });
-}
-
-function sseResponse(chunks: string[]): Response {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(chunk));
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream" },
-  });
-}
 
 function stubFetch(mock: ReturnType<typeof vi.fn>) {
   vi.stubGlobal("fetch", mock);
@@ -524,6 +482,8 @@ describe("databaseChat chat", () => {
           apiKey: "test-key",
           systemPrompt: "Be helpful.",
           maxRetries: 2,
+          baseDelayMs: 1,
+          maxDelayMs: 1,
         },
       });
 
