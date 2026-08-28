@@ -13,6 +13,10 @@ export default tseslint.config(
       "**/convex/_generated/**",
       "**/_generated/**",
       "example/dist/**",
+      // Untracked build output from the docs site
+      "docs/build/**",
+      "docs/.react-router/**",
+      "docs/.source/**",
     ],
   },
   {

@@ -577,8 +577,49 @@ advanced setups - see [Security & Multi-tenant Access](#security--multi-tenant-a
 
 Other useful config options: `maxToolLoops` (default 5), `streamThrottleMs`
 (default 100), `maxToolResultChars` (default 16000, oversized tool results are
-truncated and flagged `{ truncated: true }`), and `httpReferer` / `xTitle`
-(OpenRouter attribution headers).
+truncated and flagged `{ truncated: true }`), `httpReferer` / `xTitle`
+(OpenRouter attribution headers), `maxRetries` (default 2), `requestTimeoutMs`
+(default 30000), and `validateResultContract` (default `"warn"`).
+
+### Reliability: retries, timeouts, and typed errors
+
+Transient provider failures (network errors, 408/429/5xx) are retried
+automatically with exponential backoff and full jitter. A `Retry-After` header
+from a 429 is honored. Retries only ever happen during the connection phase of
+a request - once a response has started streaming to the client, a retry would
+duplicate content, so mid-stream failures are never retried.
+`requestTimeoutMs` bounds how long each attempt may take to deliver its first
+byte (long streams are legitimate and are not capped).
+
+Failed sends return a machine-readable classification alongside the message:
+
+```typescript
+const result = await chat.send(ctx, { conversationId, message, apiKey });
+if (!result.success) {
+  // result.error          - human-readable message
+  // result.errorCode      - "unauthorized" | "rate_limited" | "provider_error"
+  //                         | "network_error" | "timeout" | "aborted"
+  //                         | "invalid_request" | "unknown"
+  // result.retryable      - whether the failure was transient in nature
+}
+```
+
+If a message's tool loop exhausts `maxToolLoops` without a final answer, the
+result carries `stoppedReason: "max_tool_loops"` and the persisted assistant
+message explains the cutoff instead of being silently empty.
+
+### Validating the standard result contract at runtime
+
+Tools built with `defineCountTool`, `definePaginatedListTool`, or
+`defineSemanticSearchTool` declare `metadata.resultContract: "standard"`. The
+`validateResultContract` option makes the component verify the envelope those
+tools actually return:
+
+- `"warn"` (default) - contract violations are logged and the result still
+  reaches the LLM.
+- `"enforce"` - the validation errors are returned to the LLM in place of the
+  raw result, so it can adapt instead of trusting malformed metadata.
+- `"off"` - no runtime validation.
 
 ### Using the built-in `chat.send` action directly
 
