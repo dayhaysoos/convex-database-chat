@@ -78,18 +78,67 @@ import type { OpenRouterErrorCode } from "./openrouter/errors.js";
 // Types
 // =============================================================================
 
+export interface SendMessageActionResult {
+  success: boolean;
+  content?: string;
+  error?: string;
+  errorCode?: OpenRouterErrorCode;
+  retryable?: boolean;
+  stoppedReason?: "max_tool_loops";
+}
+
 export interface DatabaseChatApi {
   // Queries
-  getMessages: FunctionReference<"query">;
-  listConversations: FunctionReference<"query">;
+  getMessages: FunctionReference<
+    "query",
+    "public",
+    { conversationId: string },
+    Message[]
+  >;
+  listConversations: FunctionReference<
+    "query",
+    "public",
+    { externalId: string },
+    Array<{
+      _id: string;
+      title?: string;
+      createdAt: number;
+      updatedAt: number;
+    }>
+  >;
   // Delta-based streaming queries (new, efficient)
-  getStreamState: FunctionReference<"query">;
-  getStreamDeltas: FunctionReference<"query">;
+  getStreamState: FunctionReference<
+    "query",
+    "public",
+    { conversationId: string },
+    StreamState | null
+  >;
+  getStreamDeltas: FunctionReference<
+    "query",
+    "public",
+    { streamId: string; cursor: number },
+    StreamDelta[]
+  >;
   // Mutations
-  createConversation: FunctionReference<"mutation">;
-  abortStream: FunctionReference<"mutation">;
+  createConversation: FunctionReference<
+    "mutation",
+    "public",
+    { externalId: string; title?: string },
+    string
+  >;
+  abortStream: FunctionReference<
+    "mutation",
+    "public",
+    { conversationId: string; reason?: string },
+    boolean
+  >;
   // Actions
-  sendMessage: FunctionReference<"action">;
+  sendMessage: FunctionReference<
+    "action",
+    "public",
+    { conversationId: string; message: string },
+    SendMessageActionResult
+  >;
 }
 
 export interface Message {
@@ -259,7 +308,7 @@ function useStreamDeltaAccumulation(options: {
   const streamState = useQuery(
     api.getStreamState,
     conversationId ? { conversationId } : "skip"
-  ) as StreamState | null | undefined;
+  );
 
   const streamId = streamState?.streamId ?? null;
   const status = streamState?.status ?? null;
@@ -278,7 +327,7 @@ function useStreamDeltaAccumulation(options: {
   const deltas = useQuery(
     api.getStreamDeltas,
     streamId && status === "streaming" ? { streamId, cursor } : "skip"
-  ) as StreamDelta[] | undefined;
+  );
 
   // Accumulate new deltas with deduplication
   useEffect(() => {
@@ -395,7 +444,7 @@ export function useDatabaseChat(
   const messages = useQuery(
     api.getMessages,
     conversationId ? { conversationId } : "skip"
-  ) as Message[] | undefined;
+  );
 
   // Use delta-based streaming with client-side accumulation
   const { content: streamingContent, isStreaming } = useStreamDeltaAccumulation(
@@ -432,15 +481,10 @@ export function useDatabaseChat(
       setLastMessage(message);
 
       try {
-        const result = (await sendMessageAction({
+        const result = await sendMessageAction({
           conversationId,
           message: message.trim(),
-        })) as {
-          success: boolean;
-          content?: string;
-          error?: string;
-          errorCode?: OpenRouterErrorCode;
-        };
+        });
 
         // Check if this is still the current request, component is mounted, and not aborted
         if (
@@ -691,7 +735,7 @@ export function useMessagesWithStreaming(options: {
   const messages = useQuery(
     api.getMessages,
     conversationId ? { conversationId } : "skip"
-  ) as Message[] | undefined;
+  );
 
   const { content: streamingContent, isStreaming } = useStreamDeltaAccumulation(
     {

@@ -359,6 +359,111 @@ describe("DatabaseChatClient", () => {
       expect(calls[0].args.externalId).toBe("user:explicit");
     });
 
+    it("addMessage requires an identity", async () => {
+      const client = defineDatabaseChat(api, {});
+
+      await expect(
+        client.addMessage({} as any, "conv123" as any, "user", "hello")
+      ).rejects.toThrow(/getExternalId/);
+    });
+
+    it("addMessage routes through the scoped endpoint with the resolver", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:resolved",
+      });
+      const calls: Array<{ name: string; args: any }> = [];
+      const ctx = {
+        runMutation: async (handler: unknown, args: any) => {
+          calls.push({ name: getFunctionName(handler as any), args });
+          return "msg123";
+        },
+      } as any;
+
+      await client.addMessage(ctx, "conv123", "user", "hello");
+
+      expect(calls[0].name).toBe("messages:addForExternalId");
+      expect(calls[0].args.externalId).toBe("user:resolved");
+      expect(calls[0].args.content).toBe("hello");
+    });
+
+    it("addMessage explicit externalId overrides the resolver", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:from-resolver",
+      });
+      const calls: Array<{ name: string; args: any }> = [];
+      const ctx = {
+        runMutation: async (handler: unknown, args: any) => {
+          calls.push({ name: getFunctionName(handler as any), args });
+          return "msg123";
+        },
+      } as any;
+
+      await client.addMessage(ctx, "conv123", "user", "hello", {
+        externalId: "user:explicit",
+      });
+
+      expect(calls[0].args.externalId).toBe("user:explicit");
+    });
+
+    it("getMessagesForLLM requires an identity", async () => {
+      const client = defineDatabaseChat(api, {});
+
+      await expect(
+        client.getMessagesForLLM({} as any, "conv123" as any)
+      ).rejects.toThrow(/getExternalId/);
+    });
+
+    it("getMessagesForLLM routes through the scoped endpoint with the resolver", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:resolved",
+      });
+      const calls: Array<{ name: string; args: any }> = [];
+      const ctx = {
+        runQuery: async (handler: unknown, args: any) => {
+          calls.push({ name: getFunctionName(handler as any), args });
+          return [];
+        },
+      } as any;
+
+      await client.getMessagesForLLM(ctx, "conv123");
+
+      expect(calls[0].name).toBe("messages:listForExternalId");
+      expect(calls[0].args.externalId).toBe("user:resolved");
+    });
+
+    it("getMessagesForLLM replays assistant tool calls", async () => {
+      const client = defineDatabaseChat(api, {
+        getExternalId: async () => "user:resolved",
+      });
+      const ctx = {
+        runQuery: async () => [
+          {
+            _id: "m1",
+            role: "assistant",
+            content: "Let me check.",
+            toolCalls: [{ id: "c1", name: "t", arguments: "{}" }],
+            createdAt: 1,
+          },
+          {
+            _id: "m2",
+            role: "tool",
+            content: "",
+            toolResults: [{ toolCallId: "c1", result: "{}" }],
+            createdAt: 2,
+          },
+        ],
+      } as any;
+
+      const result = await client.getMessagesForLLM(ctx, "conv123");
+
+      const assistantWithCalls = result.messages.find(
+        (m) => m.role === "assistant",
+      );
+      expect(assistantWithCalls?.tool_calls).toHaveLength(1);
+      const toolMsg = result.messages.find((m) => m.role === "tool");
+      expect(toolMsg?.tool_call_id).toBe("c1");
+    });
+
     it("passes config overrides through to chat.send", async () => {
       const client = defineDatabaseChat(api, {
         getExternalId: async () => "user:resolved",

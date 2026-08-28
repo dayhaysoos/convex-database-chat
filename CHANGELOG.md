@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - Unreleased
+
+### Breaking
+
+- `DatabaseChatClient.addMessage` and `getMessagesForLLM` are now
+  fail-closed: they require an identity (a configured `getExternalId`
+  resolver or an explicit `externalId`) and throw when none is available.
+  Previously they silently bypassed ownership checks.
+- `DatabaseChatApi` (the object passed to `DatabaseChatProvider`) now
+  declares exact argument and return types for each entry. Wrappers whose
+  arguments don't match the expected shape will surface type errors at
+  compile time.
+
+### Added
+
+- `messages.addForExternalId`: ownership-checked message write, mirroring
+  the other `*ForExternalId` endpoints.
+- `DatabaseChatClient.getMessagesForLLM` now replays assistant
+  `tool_calls` and tool results faithfully for bring-your-own-SDK
+  consumers, matching the main send path's behavior.
+
+### Changed
+
+- `client.ts` uses structural context types instead of
+  `GenericQueryCtx<any>`-style aliases, and centralizes its component-ID
+  conversions behind named boundary helpers.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added
