@@ -758,6 +758,16 @@ body {
   border: 1px solid #7f1d1d;
 }
 
+/* Non-error notice (e.g. tool-loop limit reached) */
+.chat-notice {
+  background: #1e3a5f;
+  color: #93c5fd;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  border: 1px solid #1d4ed8;
+}
+
 /* Input form */
 .chat-input-form {
   display: flex;

@@ -286,6 +286,7 @@ export function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [showTools, setShowTools] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -382,6 +383,7 @@ export function Chat() {
     setInputValue("");
     setIsLoading(true);
     setError(null);
+    setNotice(null);
     wasAbortedRef.current = false;
 
     try {
@@ -398,11 +400,19 @@ export function Chat() {
       }
 
       if (!result.success) {
-        // Don't show "Stream aborted" as an error - it's expected when user stops
-        if (!result.error?.includes("aborted")) {
-          setError(result.error ?? "Failed to send message");
+        // Abort is expected when the user presses Stop - typed, not sniffed
+        if (result.errorCode !== "aborted") {
+          const suffix = result.errorCode
+            ? ` (${result.errorCode}${result.retryable ? " · retryable" : ""})`
+            : "";
+          setError((result.error ?? "Failed to send message") + suffix);
         }
       } else {
+        if (result.stoppedReason === "max_tool_loops") {
+          setNotice(
+            "Response stopped early: the tool-round limit was reached before a final answer.",
+          );
+        }
         // Update local rate limit after successful send
         await recordMessage();
       }
@@ -447,6 +457,7 @@ export function Chat() {
   const handleNewChat = async () => {
     setConversationId(null);
     setError(null);
+    setNotice(null);
   };
 
   const isRateLimited = !canSendMessage();
@@ -614,6 +625,9 @@ export function Chat() {
                 <strong>Error:</strong> {error}
               </div>
             )}
+
+            {/* Non-error notice (e.g. tool-loop limit reached) */}
+            {notice && <div className="chat-notice">{notice}</div>}
 
             <div ref={messagesEndRef} />
           </div>
