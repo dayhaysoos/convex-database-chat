@@ -16,7 +16,7 @@ import {
 } from "./toolGuidance";
 import { DeltaStreamer } from "./deltaStreamer";
 import { executeToolWithContext } from "./toolExecution";
-import { validateToolResultContract } from "./resultContract";
+import { shapeToolResult } from "./resultContract";
 import {
   OpenRouterError,
   isAbortError,
@@ -310,42 +310,22 @@ async function sendInternal(
             config.toolContext
           );
 
-          if (
-            contractValidation !== "off" &&
-            tool.metadata?.resultContract === "standard"
-          ) {
-            const contractErrors = validateToolResultContract(result);
-            if (contractErrors.length > 0) {
-              if (contractValidation === "enforce") {
-                toolResults.push({
-                  toolCallId: toolCall.id,
-                  result: JSON.stringify({
-                    error: "Tool result violated the standard result contract",
-                    contractErrors,
-                  }),
-                });
-                executedToolCalls.push({
-                  name: toolCall.name,
-                  args: mergedArgs,
-                  result: { contractErrors },
-                });
-                continue;
-              }
-              console.warn(
-                `Tool ${toolCall.name} violated the standard result contract:`,
-                contractErrors
-              );
-            }
+          const shaped = shapeToolResult(tool, result, {
+            validation: contractValidation,
+            maxChars: maxToolResultChars,
+          });
+          if (shaped.violation) {
+            console.warn(shaped.violation.message, shaped.violation.errors);
           }
 
           toolResults.push({
             toolCallId: toolCall.id,
-            result: capToolResult(result, maxToolResultChars),
+            result: shaped.toolResult,
           });
           executedToolCalls.push({
             name: toolCall.name,
             args: mergedArgs,
-            result,
+            result: shaped.record,
           });
         } catch (error) {
           const errorMsg =
@@ -456,22 +436,7 @@ const DEFAULT_MAX_TOOL_RESULT_CHARS = 16000;
 const DEFAULT_MAX_TOOL_LOOPS = 5;
 const DEFAULT_STREAM_THROTTLE_MS = 100;
 
-/**
- * Serialize a tool result for the LLM, truncating oversized results so a
- * single large payload can't blow up the context window. The returned value
- * is always valid JSON.
- */
-export function capToolResult(result: unknown, maxChars: number): string {
-  const json = JSON.stringify(result);
-  if (json.length <= maxChars) {
-    return json;
-  }
-  return JSON.stringify({
-    truncated: true,
-    originalLength: json.length,
-    data: json.slice(0, maxChars),
-  });
-}
+export { capToolResult } from "./resultContract";
 
 /**
  * Build messages array for OpenRouter API, preserving tool calls and results

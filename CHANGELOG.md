@@ -47,6 +47,9 @@ and this project adheres to
   now dropped.
 - Tool loops that exhaust `maxToolLoops` no longer persist a silently empty
   final assistant message; the persisted message explains the cutoff.
+- The enforce path of `validateResultContract` now routes its error envelope
+  through the same size cap as every other tool result, so a large set of
+  contract errors cannot blow up the LLM context.
 
 ### Changed
 
