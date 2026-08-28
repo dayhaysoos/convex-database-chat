@@ -50,6 +50,11 @@ and this project adheres to
 
 ### Changed
 
+- `validateResultContract` now validates against the closed set
+  (`"off" | "warn" | "enforce"`) at the function boundary; unknown values
+  throw a validation error instead of silently running in warn mode. Send
+  results carry the typed unions (`errorCode`, `stoppedReason`), and the
+  React hook detects aborts solely via `errorCode: "aborted"`.
 - **Breaking** (`./vector` entrypoint): `generateEmbedding` options
   `referer` and `title` are renamed to `httpReferer` and `xTitle`, matching
   the chat surface. The function now also throws `OpenRouterError` (an

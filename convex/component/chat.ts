@@ -22,16 +22,22 @@ import {
   isAbortError,
   streamChatCompletion,
 } from "../../src/openrouter/index.js";
+import {
+  openRouterErrorCodes,
+  type OpenRouterErrorCode,
+} from "../../src/openrouter/errors.js";
 
 export type ResultContractValidation = "off" | "warn" | "enforce";
+
+export type StoppedReason = "max_tool_loops";
 
 export interface DatabaseChatSendResult {
   success: boolean;
   content?: string;
   error?: string;
-  errorCode?: string;
+  errorCode?: OpenRouterErrorCode;
   retryable?: boolean;
-  stoppedReason?: string;
+  stoppedReason?: StoppedReason;
   toolCalls?: Array<{ name: string; args: unknown; result: unknown }>;
 }
 
@@ -56,16 +62,24 @@ const sendConfigValidator = v.object({
   xTitle: v.optional(v.string()),
   maxRetries: v.optional(v.number()),
   requestTimeoutMs: v.optional(v.number()),
-  validateResultContract: v.optional(v.string()),
+  validateResultContract: v.optional(
+    v.union(
+      v.literal("off"),
+      v.literal("warn"),
+      v.literal("enforce")
+    )
+  ),
 });
 
 const sendReturnValidator = v.object({
   success: v.boolean(),
   content: v.optional(v.string()),
   error: v.optional(v.string()),
-  errorCode: v.optional(v.string()),
+  errorCode: v.optional(
+    v.union(...openRouterErrorCodes.map((code) => v.literal(code)))
+  ),
   retryable: v.optional(v.boolean()),
-  stoppedReason: v.optional(v.string()),
+  stoppedReason: v.optional(v.literal("max_tool_loops")),
   // Tool calls that were made (for debugging/logging)
   toolCalls: v.optional(
     v.array(
@@ -143,7 +157,7 @@ async function sendInternal(
       xTitle?: string;
       maxRetries?: number;
       requestTimeoutMs?: number;
-      validateResultContract?: string;
+      validateResultContract?: ResultContractValidation;
     };
   }
 ): Promise<DatabaseChatSendResult> {
@@ -152,11 +166,7 @@ async function sendInternal(
   const maxToolLoops = config.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS;
   const maxToolResultChars = config.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
   const contractValidation: ResultContractValidation =
-    config.validateResultContract === "enforce"
-      ? "enforce"
-      : config.validateResultContract === "off"
-        ? "off"
-        : "warn";
+    config.validateResultContract ?? "warn";
   const executedToolCalls: Array<{
     name: string;
     args: unknown;
@@ -418,7 +428,7 @@ async function sendInternal(
       error instanceof Error ? error.message : "Unknown error";
     await streamer.fail(errorMessage);
 
-    let errorCode: string | undefined;
+    let errorCode: OpenRouterErrorCode | undefined;
     let retryable: boolean | undefined;
     if (error instanceof OpenRouterError) {
       errorCode = error.code;

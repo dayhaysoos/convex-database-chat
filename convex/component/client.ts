@@ -81,6 +81,10 @@ import type {
 import type { api } from "./_generated/api";
 import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 import type { TableInfo, SchemaToolHandlers } from "./schemaTools";
+import type {
+  DatabaseChatSendResult,
+  ResultContractValidation,
+} from "./chat";
 import { generateToolsFromSchema } from "./schemaTools";
 import { formatToolsForLLM, findTool, validateToolArgs } from "./tools";
 import { executeToolHandler } from "./toolExecution";
@@ -153,7 +157,7 @@ export interface DatabaseChatConfig {
   maxToolResultChars?: number;
   maxRetries?: number;
   requestTimeoutMs?: number;
-  validateResultContract?: "off" | "warn" | "enforce";
+  validateResultContract?: ResultContractValidation;
   /**
    * Resolve the caller's externalId server-side. When configured, all client
    * methods route through ownership-checked (*ForExternalId) endpoints -
@@ -196,7 +200,7 @@ export interface SendMessageOptions {
   maxToolResultChars?: number;
   maxRetries?: number;
   requestTimeoutMs?: number;
-  validateResultContract?: "off" | "warn" | "enforce";
+  validateResultContract?: ResultContractValidation;
   /**
    * Explicit externalId. Overrides the configured getExternalId resolver.
    * Only use this if the value is derived server-side, never from client input.
@@ -204,16 +208,7 @@ export interface SendMessageOptions {
   externalId?: string;
 }
 
-export interface SendMessageResult {
-  success: boolean;
-  content?: string;
-  error?: string;
-  errorCode?: string;
-  retryable?: boolean;
-  stoppedReason?: string;
-  /** Tool calls that were executed (for debugging/logging) */
-  toolCalls?: Array<{ name: string; args: unknown; result: unknown }>;
-}
+export type SendMessageResult = DatabaseChatSendResult;
 
 /**
  * Client for interacting with the DatabaseChat component.

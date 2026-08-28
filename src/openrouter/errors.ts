@@ -1,12 +1,15 @@
-export type OpenRouterErrorCode =
-  | "unauthorized"
-  | "rate_limited"
-  | "provider_error"
-  | "network_error"
-  | "timeout"
-  | "aborted"
-  | "invalid_request"
-  | "unknown";
+export const openRouterErrorCodes = [
+  "unauthorized",
+  "rate_limited",
+  "provider_error",
+  "network_error",
+  "timeout",
+  "aborted",
+  "invalid_request",
+  "unknown",
+] as const;
+
+export type OpenRouterErrorCode = (typeof openRouterErrorCodes)[number];
 
 export interface OpenRouterErrorOptions {
   code: OpenRouterErrorCode;
