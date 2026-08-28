@@ -434,10 +434,6 @@ describe("databaseChat chat", () => {
     });
   });
 
-  // ===========================================================================
-  // chat.send integration (OpenRouter mocked via a stubbed global fetch)
-  // ===========================================================================
-
   describe("chat.send integration", () => {
     afterEach(() => {
       vi.unstubAllGlobals();
@@ -612,8 +608,6 @@ describe("databaseChat chat", () => {
         },
       });
 
-      // getLatest returns a bare message object, not the { data, meta }
-      // envelope, so enforcement replaces the result with contract errors.
       expect(result.success).toBe(true);
       expect(result.toolCalls?.[0].result).toHaveProperty("contractErrors");
       const toolResult = JSON.parse(
@@ -630,7 +624,6 @@ describe("databaseChat chat", () => {
       const tool = await createTool();
       const argsJson = JSON.stringify({ conversationId });
 
-      // Every round requests the same tool call - the loop must exhaust.
       stubFetch(
         vi.fn(async () =>
           sseResponse([toolCallChunk("call_1", "getLatest", argsJson)])

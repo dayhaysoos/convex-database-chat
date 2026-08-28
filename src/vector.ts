@@ -5,8 +5,6 @@
  * import Convex runtime types. You own your schema, actions, and vector indexes.
  */
 
-// Embedding generation lives in the OpenRouter provider module; re-exported
-// here so the `./vector` entrypoint surface stays stable.
 export { generateEmbedding, DEFAULT_EMBEDDING_MODEL } from "./openrouter/index.js";
 export type { GenerateEmbeddingOptions } from "./openrouter/index.js";
 

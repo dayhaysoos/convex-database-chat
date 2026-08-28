@@ -25,12 +25,6 @@ import {
 
 export type ResultContractValidation = "off" | "warn" | "enforce";
 
-/**
- * Shape of the send result. Annotating sendInternal's return with this is
- * load-bearing: without it, TypeScript infers the type by walking into
- * DeltaStreamer's `component: typeof api`, which circularly depends on this
- * module through _generated/api (TS2502/TS7022 errors).
- */
 export interface DatabaseChatSendResult {
   success: boolean;
   content?: string;
@@ -60,12 +54,8 @@ const sendConfigValidator = v.object({
   // OpenRouter attribution headers (sent as HTTP-Referer / X-Title)
   httpReferer: v.optional(v.string()),
   xTitle: v.optional(v.string()),
-  // Retries after the first provider attempt (default: 2)
   maxRetries: v.optional(v.number()),
-  // Time-to-first-byte budget per provider attempt in ms (default: 30000)
   requestTimeoutMs: v.optional(v.number()),
-  // Standard result contract enforcement for tools marked
-  // metadata.resultContract === "standard" (default: "warn")
   validateResultContract: v.optional(v.string()),
 });
 
@@ -73,14 +63,8 @@ const sendReturnValidator = v.object({
   success: v.boolean(),
   content: v.optional(v.string()),
   error: v.optional(v.string()),
-  // Machine-readable failure classification (OpenRouterErrorCode or
-  // "aborted"); absent on success.
   errorCode: v.optional(v.string()),
-  // Whether the failure was transient in nature. Retrying a chat send
-  // creates a new assistant turn, so this is advisory for callers.
   retryable: v.optional(v.boolean()),
-  // Set when generation ended without a final answer because maxToolLoops
-  // was exhausted.
   stoppedReason: v.optional(v.string()),
   // Tool calls that were made (for debugging/logging)
   toolCalls: v.optional(
@@ -167,8 +151,6 @@ async function sendInternal(
   const tools = (config.tools ?? []) as DatabaseChatTool[];
   const maxToolLoops = config.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS;
   const maxToolResultChars = config.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
-  // Unknown values fall back to "warn" so a typo can't silently disable
-  // (or enforce) validation.
   const contractValidation: ResultContractValidation =
     config.validateResultContract === "enforce"
       ? "enforce"
@@ -198,7 +180,6 @@ async function sendInternal(
       messages,
       tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
       onChunk: async (delta: string) => {
-        // Add delta as a text part - DeltaStreamer batches these
         await streamer.addParts([{ type: "text-delta", text: delta }]);
       },
       abortSignal: streamer.abortController.signal,
@@ -319,9 +300,6 @@ async function sendInternal(
             config.toolContext
           );
 
-          // Validate the standard result contract when the tool declares it.
-          // "warn" logs and passes the result through; "enforce" feeds the
-          // validation errors back to the LLM instead of the raw result.
           if (
             contractValidation !== "off" &&
             tool.metadata?.resultContract === "standard"
@@ -406,9 +384,6 @@ async function sendInternal(
       response = await streamChat(nextOpenRouterMessages);
     }
 
-    // The loop can also exit with pending tool calls when maxToolLoops is
-    // exhausted - surface that so callers can distinguish it from a normal
-    // finish, and never persist a silently empty final message.
     const stoppedByLoopLimit =
       !!response.toolCalls &&
       response.toolCalls.length > 0 &&
@@ -510,11 +485,6 @@ export function buildMessagesWithTools(
   }>;
   tool_call_id?: string;
 }> {
-  // The most-recent-N window can start with tool result messages whose
-  // paired assistant tool_calls message fell outside the window. Providers
-  // reject a tool message without its preceding tool_calls, so drop the
-  // orphans (assistant tool_calls always precede their results, so any
-  // leading tool message is orphaned by definition).
   let first = 0;
   while (first < messages.length && messages[first].role === "tool") {
     first++;

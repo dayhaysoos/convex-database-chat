@@ -1,11 +1,3 @@
-/**
- * OpenRouter provider module.
- *
- * Backend-safe (no Convex runtime imports): consumable from Convex actions,
- * app code, and tests alike. All failures are {@link OpenRouterError}s with
- * a machine-readable `code` and a `retryable` flag.
- */
-
 export {
   OpenRouterError,
   type OpenRouterErrorCode,

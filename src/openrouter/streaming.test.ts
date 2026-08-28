@@ -15,7 +15,6 @@ function contentChunk(text: string): string {
   return sseData({ choices: [{ delta: { content: text } }] });
 }
 
-/** A 200 response whose body is an SSE stream of the given raw chunks. */
 function sseResponse(chunks: string[]): Response {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -31,10 +30,6 @@ function sseResponse(chunks: string[]): Response {
   });
 }
 
-/**
- * A 200 response whose body never produces a byte until the fetch signal
- * aborts (at which point the stream errors, like a real network body would).
- */
 function hangingResponse(init?: { signal?: AbortSignal }): Response {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -196,7 +191,6 @@ describe("streamChatCompletion", () => {
   });
 
   it("never retries once content has been emitted", async () => {
-    // Stream produces one content chunk, then the connection dies mid-stream.
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode(contentChunk("partial")));
@@ -212,7 +206,6 @@ describe("streamChatCompletion", () => {
 
     expect(error).toBeInstanceOf(OpenRouterError);
     expect(error.retryable).toBe(false);
-    // Exactly one attempt: a retry would duplicate the emitted content.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

@@ -446,9 +446,6 @@ export function useDatabaseChat(
         }
 
         if (!result.success) {
-          // Don't show aborts as errors - they're expected when the user
-          // stops. errorCode is authoritative; the string check covers
-          // servers that predate typed error codes.
           const aborted =
             result.errorCode === "aborted" ||
             !!result.error?.toLowerCase().includes("aborted");

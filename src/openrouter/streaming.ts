@@ -1,13 +1,3 @@
-/**
- * OpenRouter chat-completions client with SSE streaming.
- *
- * The transport and its reliability policy live together in this module on
- * purpose: "retry only before any content has been emitted" is a protocol
- * between the caller and the stream, so keeping the retry loop, the
- * time-to-first-byte timeout, and the SSE parser in one file is what keeps
- * that invariant testable and hard to regress.
- */
-
 import {
   OpenRouterError,
   isAbortError,
@@ -22,9 +12,6 @@ import {
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-/**
- * OpenRouter attribution headers (HTTP-Referer / X-Title).
- */
 export interface OpenRouterAttribution {
   httpReferer?: string;
   xTitle?: string;
@@ -34,11 +21,6 @@ export const DEFAULT_HTTP_REFERER =
   "https://github.com/dayhaysoos/convex-database-chat";
 export const DEFAULT_X_TITLE = "DatabaseChat";
 
-/**
- * Default time-to-first-byte budget. Long streams are legitimate, so this
- * bounds only how long the provider may take before the first byte arrives -
- * the caller's own stream heartbeat governs total duration.
- */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface ChatCompletionMessage {
@@ -62,18 +44,12 @@ export interface StreamChatCompletionOptions {
   model: string;
   messages: ChatCompletionMessage[];
   tools?: ChatCompletionTool[];
-  /** Called with each text delta (not accumulated content). */
   onChunk: (delta: string) => Promise<void>;
-  /** Caller abort signal; when it fires the request stops with code "aborted". */
   abortSignal?: AbortSignal;
   attribution?: OpenRouterAttribution;
-  /** Retries after the first attempt (default 2). */
   maxRetries?: number;
-  /** Time-to-first-byte budget in ms (default 30000). */
   requestTimeoutMs?: number;
-  /** Test seam: base backoff delay in ms. */
   baseDelayMs?: number;
-  /** Test seam: ceiling for a single backoff wait in ms. */
   maxDelayMs?: number;
 }
 
@@ -82,18 +58,6 @@ export interface StreamChatCompletionResult {
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
 }
 
-/**
- * Call OpenRouter chat completions with SSE streaming.
- *
- * Retry policy:
- * - Only network errors, 408/429/5xx responses, and a first-byte timeout are
- *   retried, and only while nothing has been emitted to `onChunk`. Once the
- *   stream has produced content, a retry would duplicate it, so failures
- *   after that point propagate immediately.
- * - `Retry-After` from a 429 is honored (capped by `maxDelayMs`).
- * - The caller's abort signal is checked before every attempt and during
- *   backoff waits.
- */
 export async function streamChatCompletion(
   options: StreamChatCompletionOptions
 ): Promise<StreamChatCompletionResult> {
@@ -106,8 +70,6 @@ export async function streamChatCompletion(
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const callerSignal = options.abortSignal;
 
-  // Flips to true the moment a delta reaches onChunk. After that, no retry
-  // is ever safe - a second attempt would duplicate streamed content.
   let contentEmitted = false;
   const onChunk = async (delta: string) => {
     contentEmitted = true;
@@ -174,24 +136,13 @@ export async function streamChatCompletion(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Attempt lifecycle: composed abort (caller signal + TTFB timer)
-// ---------------------------------------------------------------------------
-
 interface AttemptSession {
   controller: AbortController;
   readonly callerAborted: boolean;
   readonly timedOut: boolean;
-  /** Clear the TTFB timer; safe to call more than once. */
   dispose: () => void;
 }
 
-/**
- * Compose the caller's signal and a time-to-first-byte timer into one
- * AbortController. The timer stays armed until the first body byte arrives
- * (see consumeSseStream), so a provider that accepts the connection but
- * never produces a first chunk still times out.
- */
 function beginAttempt(
   callerSignal: AbortSignal | undefined,
   requestTimeoutMs: number
@@ -206,7 +157,6 @@ function beginAttempt(
   };
   callerSignal?.addEventListener("abort", onCallerAbort);
   if (callerSignal?.aborted) {
-    // addEventListener does not fire for signals that aborted earlier.
     onCallerAbort();
   }
 
@@ -236,8 +186,6 @@ function classifyFetchRejection(
   requestTimeoutMs: number
 ): OpenRouterError {
   if (session.callerAborted || session.controller.signal.aborted) {
-    // Timer fired before headers, or the caller aborted - both abort the
-    // same controller, so distinguish via the flags.
     if (session.timedOut && !session.callerAborted) {
       return timeoutError(requestTimeoutMs, true);
     }
@@ -262,7 +210,6 @@ function classifyConsumptionError(
     return abortedError();
   }
   if (session.timedOut) {
-    // First byte never arrived, so nothing was emitted: retrying is safe.
     return new OpenRouterError(
       "No response received within the request timeout",
       { code: "timeout", retryable: !contentEmitted }
@@ -277,12 +224,14 @@ function classifyConsumptionError(
   const message = error instanceof Error ? error.message : String(error);
   return new OpenRouterError(`Stream failed after connecting: ${message}`, {
     code: "network_error",
-    // Past this point a retry could duplicate delivered content.
     retryable: false,
   });
 }
 
-function timeoutError(requestTimeoutMs: number, retryable: boolean): OpenRouterError {
+function timeoutError(
+  requestTimeoutMs: number,
+  retryable: boolean
+): OpenRouterError {
   return new OpenRouterError(
     `No response received within ${requestTimeoutMs}ms`,
     { code: "timeout", retryable }
@@ -296,12 +245,6 @@ function abortedError(): OpenRouterError {
   });
 }
 
-/**
- * Either throw the error or arrange a retry: sleeps the backoff delay and
- * returns so the caller continues its loop. Throws instead when retries are
- * exhausted, the error is non-retryable, content was already emitted, or the
- * caller aborted during the wait.
- */
 async function failOrRetry(
   error: OpenRouterError,
   context: {
@@ -329,10 +272,6 @@ async function failOrRetry(
     throw abortedError();
   }
 }
-
-// ---------------------------------------------------------------------------
-// SSE consumption
-// ---------------------------------------------------------------------------
 
 async function consumeSseStream(context: {
   response: Response;
@@ -399,9 +338,7 @@ async function consumeSseStream(context: {
           }
         }
       }
-    } catch {
-      // Malformed chunks happen; a partial line must not kill the stream.
-    }
+    } catch {}
   };
 
   try {
@@ -409,8 +346,6 @@ async function consumeSseStream(context: {
       const { done, value } = await reader.read();
       if (!firstByteSeen) {
         firstByteSeen = true;
-        // First body byte arrived: the TTFB budget is spent and the timer
-        // must not kill the rest of the stream.
         session.dispose();
       }
       if (done) {
@@ -426,14 +361,11 @@ async function consumeSseStream(context: {
       }
     }
 
-    // Flush the decoder and process any trailing line that arrived without
-    // a terminating newline - providers occasionally end streams that way.
     buffer += decoder.decode();
     if (buffer.trim().length > 0) {
       await handleLine(buffer);
     }
   } catch (error) {
-    // Best-effort release so a hung stream doesn't keep resources alive.
     reader.cancel().catch(() => {});
     throw error;
   }
@@ -447,10 +379,6 @@ async function consumeSseStream(context: {
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Request body
-// ---------------------------------------------------------------------------
 
 function bodyFor(options: StreamChatCompletionOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {

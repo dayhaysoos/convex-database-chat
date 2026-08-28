@@ -48,6 +48,7 @@ export default tseslint.config(
 
       // General rules
       "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-empty": ["error", { allowEmptyCatch: true }],
     },
     settings: {
       react: {
