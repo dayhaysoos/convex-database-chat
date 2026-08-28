@@ -63,7 +63,9 @@ export declare const components: {
         {
           config: {
             apiKey: string;
+            baseDelayMs?: number;
             httpReferer?: string;
+            maxDelayMs?: number;
             maxMessagesForLLM?: number;
             maxRetries?: number;
             maxToolLoops?: number;
@@ -125,7 +127,9 @@ export declare const components: {
         {
           config: {
             apiKey: string;
+            baseDelayMs?: number;
             httpReferer?: string;
+            maxDelayMs?: number;
             maxMessagesForLLM?: number;
             maxRetries?: number;
             maxToolLoops?: number;
