@@ -446,8 +446,13 @@ export function useDatabaseChat(
         }
 
         if (!result.success) {
-          // Don't show "Stream aborted" as an error - it's expected when user stops
-          if (result.error && !result.error.toLowerCase().includes("aborted")) {
+          // Don't show aborts as errors - they're expected when the user
+          // stops. errorCode is authoritative; the string check covers
+          // servers that predate typed error codes.
+          const aborted =
+            result.errorCode === "aborted" ||
+            !!result.error?.toLowerCase().includes("aborted");
+          if (result.error && !aborted) {
             const err = new Error(result.error);
             setError(err);
             onError?.(err);

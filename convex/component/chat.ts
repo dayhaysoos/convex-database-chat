@@ -16,6 +16,30 @@ import {
 } from "./toolGuidance";
 import { DeltaStreamer } from "./deltaStreamer";
 import { executeToolWithContext } from "./toolExecution";
+import { validateToolResultContract } from "./resultContract";
+import {
+  OpenRouterError,
+  isAbortError,
+  streamChatCompletion,
+} from "../../src/openrouter/index.js";
+
+export type ResultContractValidation = "off" | "warn" | "enforce";
+
+/**
+ * Shape of the send result. Annotating sendInternal's return with this is
+ * load-bearing: without it, TypeScript infers the type by walking into
+ * DeltaStreamer's `component: typeof api`, which circularly depends on this
+ * module through _generated/api (TS2502/TS7022 errors).
+ */
+export interface DatabaseChatSendResult {
+  success: boolean;
+  content?: string;
+  error?: string;
+  errorCode?: string;
+  retryable?: boolean;
+  stoppedReason?: string;
+  toolCalls?: Array<{ name: string; args: unknown; result: unknown }>;
+}
 
 const sendConfigValidator = v.object({
   apiKey: v.string(),
@@ -36,12 +60,28 @@ const sendConfigValidator = v.object({
   // OpenRouter attribution headers (sent as HTTP-Referer / X-Title)
   httpReferer: v.optional(v.string()),
   xTitle: v.optional(v.string()),
+  // Retries after the first provider attempt (default: 2)
+  maxRetries: v.optional(v.number()),
+  // Time-to-first-byte budget per provider attempt in ms (default: 30000)
+  requestTimeoutMs: v.optional(v.number()),
+  // Standard result contract enforcement for tools marked
+  // metadata.resultContract === "standard" (default: "warn")
+  validateResultContract: v.optional(v.string()),
 });
 
 const sendReturnValidator = v.object({
   success: v.boolean(),
   content: v.optional(v.string()),
   error: v.optional(v.string()),
+  // Machine-readable failure classification (OpenRouterErrorCode or
+  // "aborted"); absent on success.
+  errorCode: v.optional(v.string()),
+  // Whether the failure was transient in nature. Retrying a chat send
+  // creates a new assistant turn, so this is advisory for callers.
+  retryable: v.optional(v.boolean()),
+  // Set when generation ended without a final answer because maxToolLoops
+  // was exhausted.
+  stoppedReason: v.optional(v.string()),
   // Tool calls that were made (for debugging/logging)
   toolCalls: v.optional(
     v.array(
@@ -117,13 +157,24 @@ async function sendInternal(
       maxToolResultChars?: number;
       httpReferer?: string;
       xTitle?: string;
+      maxRetries?: number;
+      requestTimeoutMs?: number;
+      validateResultContract?: string;
     };
   }
-) {
+): Promise<DatabaseChatSendResult> {
   const { conversationId, message, config } = args;
   const tools = (config.tools ?? []) as DatabaseChatTool[];
   const maxToolLoops = config.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS;
   const maxToolResultChars = config.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
+  // Unknown values fall back to "warn" so a typo can't silently disable
+  // (or enforce) validation.
+  const contractValidation: ResultContractValidation =
+    config.validateResultContract === "enforce"
+      ? "enforce"
+      : config.validateResultContract === "off"
+        ? "off"
+        : "warn";
   const executedToolCalls: Array<{
     name: string;
     args: unknown;
@@ -137,6 +188,27 @@ async function sendInternal(
       console.warn("Stream aborted:", reason);
     },
   });
+
+  const streamChat = (
+    messages: Parameters<typeof streamChatCompletion>[0]["messages"]
+  ) =>
+    streamChatCompletion({
+      apiKey: config.apiKey,
+      model: config.model ?? "openai/gpt-4o",
+      messages,
+      tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
+      onChunk: async (delta: string) => {
+        // Add delta as a text part - DeltaStreamer batches these
+        await streamer.addParts([{ type: "text-delta", text: delta }]);
+      },
+      abortSignal: streamer.abortController.signal,
+      attribution: {
+        httpReferer: config.httpReferer,
+        xTitle: config.xTitle,
+      },
+      maxRetries: config.maxRetries,
+      requestTimeoutMs: config.requestTimeoutMs,
+    });
 
   try {
     // 1. Save the user message
@@ -166,21 +238,7 @@ async function sendInternal(
 
     // 5. Call OpenRouter with streaming (and tools if provided)
     // DeltaStreamer batches token writes for efficiency
-    let response = await callOpenRouter({
-      apiKey: config.apiKey,
-      model: config.model ?? "openai/gpt-4o",
-      messages: openRouterMessages,
-      tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
-      onChunk: async (delta: string) => {
-        // Add delta as a text part - DeltaStreamer batches these
-        await streamer.addParts([{ type: "text-delta", text: delta }]);
-      },
-      abortSignal: streamer.abortController.signal,
-      attribution: {
-        httpReferer: config.httpReferer,
-        xTitle: config.xTitle,
-      },
-    });
+    let response = await streamChat(openRouterMessages);
 
     // 6. Handle tool calls (loop until no more tool calls)
     let loopCount = 0;
@@ -207,7 +265,10 @@ async function sendInternal(
         // Mark our controller aborted so the catch block's fail() is a no-op
         // and the fetch in flight (if any) gets cancelled.
         streamer.abortController.abort();
-        throw new Error("Stream aborted");
+        throw new OpenRouterError("Stream aborted", {
+          code: "aborted",
+          retryable: false,
+        });
       }
 
       loopCount++;
@@ -257,6 +318,38 @@ async function sendInternal(
             parsedArgs,
             config.toolContext
           );
+
+          // Validate the standard result contract when the tool declares it.
+          // "warn" logs and passes the result through; "enforce" feeds the
+          // validation errors back to the LLM instead of the raw result.
+          if (
+            contractValidation !== "off" &&
+            tool.metadata?.resultContract === "standard"
+          ) {
+            const contractErrors = validateToolResultContract(result);
+            if (contractErrors.length > 0) {
+              if (contractValidation === "enforce") {
+                toolResults.push({
+                  toolCallId: toolCall.id,
+                  result: JSON.stringify({
+                    error: "Tool result violated the standard result contract",
+                    contractErrors,
+                  }),
+                });
+                executedToolCalls.push({
+                  name: toolCall.name,
+                  args: mergedArgs,
+                  result: { contractErrors },
+                });
+                continue;
+              }
+              console.warn(
+                `Tool ${toolCall.name} violated the standard result contract:`,
+                contractErrors
+              );
+            }
+          }
+
           toolResults.push({
             toolCallId: toolCall.id,
             result: capToolResult(result, maxToolResultChars),
@@ -310,21 +403,23 @@ async function sendInternal(
       await streamer.getStreamId();
 
       // Call LLM again with tool results
-      response = await callOpenRouter({
-        apiKey: config.apiKey,
-        model: config.model ?? "openai/gpt-4o",
-        messages: nextOpenRouterMessages,
-        tools: formatToolsForLLM(tools),
-        onChunk: async (delta: string) => {
-          await streamer.addParts([{ type: "text-delta", text: delta }]);
-        },
-        abortSignal: streamer.abortController.signal,
-        attribution: {
-          httpReferer: config.httpReferer,
-          xTitle: config.xTitle,
-        },
-      });
+      response = await streamChat(nextOpenRouterMessages);
     }
+
+    // The loop can also exit with pending tool calls when maxToolLoops is
+    // exhausted - surface that so callers can distinguish it from a normal
+    // finish, and never persist a silently empty final message.
+    const stoppedByLoopLimit =
+      !!response.toolCalls &&
+      response.toolCalls.length > 0 &&
+      loopCount >= maxToolLoops &&
+      !streamer.abortController.signal.aborted;
+    const stoppedReason = stoppedByLoopLimit ? "max_tool_loops" : undefined;
+    const finalContent =
+      response.content ||
+      (stoppedByLoopLimit
+        ? `Stopped after ${loopCount} tool round${loopCount === 1 ? "" : "s"} without reaching a final answer.`
+        : "");
 
     // 7. Finish streaming (this cleans up deltas)
     await streamer.finish();
@@ -333,12 +428,13 @@ async function sendInternal(
     await ctx.runMutation(api.messages.add, {
       conversationId,
       role: "assistant",
-      content: response.content,
+      content: finalContent,
     });
 
     return {
       success: true,
-      content: response.content,
+      content: finalContent,
+      stoppedReason,
       toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
     };
   } catch (error) {
@@ -347,9 +443,21 @@ async function sendInternal(
       error instanceof Error ? error.message : "Unknown error";
     await streamer.fail(errorMessage);
 
+    let errorCode: string | undefined;
+    let retryable: boolean | undefined;
+    if (error instanceof OpenRouterError) {
+      errorCode = error.code;
+      retryable = error.retryable;
+    } else if (isAbortError(error)) {
+      errorCode = "aborted";
+      retryable = false;
+    }
+
     return {
       success: false,
       error: errorMessage,
+      errorCode,
+      retryable,
     };
   }
 }
@@ -362,14 +470,6 @@ Always explain what you found in a clear, helpful way.`;
 const DEFAULT_MAX_TOOL_RESULT_CHARS = 16000;
 const DEFAULT_MAX_TOOL_LOOPS = 5;
 const DEFAULT_STREAM_THROTTLE_MS = 100;
-
-/**
- * OpenRouter attribution headers (HTTP-Referer / X-Title).
- */
-interface OpenRouterAttribution {
-  httpReferer?: string;
-  xTitle?: string;
-}
 
 /**
  * Serialize a tool result for the LLM, truncating oversized results so a
@@ -410,6 +510,16 @@ export function buildMessagesWithTools(
   }>;
   tool_call_id?: string;
 }> {
+  // The most-recent-N window can start with tool result messages whose
+  // paired assistant tool_calls message fell outside the window. Providers
+  // reject a tool message without its preceding tool_calls, so drop the
+  // orphans (assistant tool_calls always precede their results, so any
+  // leading tool message is orphaned by definition).
+  let first = 0;
+  while (first < messages.length && messages[first].role === "tool") {
+    first++;
+  }
+
   const result: Array<{
     role: string;
     content?: string;
@@ -421,7 +531,7 @@ export function buildMessagesWithTools(
     tool_call_id?: string;
   }> = [{ role: "system", content: systemPrompt }];
 
-  for (const msg of messages) {
+  for (const msg of messages.slice(first)) {
     if (msg.role === "user") {
       result.push({ role: "user", content: msg.content });
     } else if (msg.role === "assistant") {
@@ -455,144 +565,4 @@ export function buildMessagesWithTools(
   }
 
   return result;
-}
-
-const DEFAULT_HTTP_REFERER = "https://github.com/dayhaysoos/convex-database-chat";
-const DEFAULT_X_TITLE = "DatabaseChat";
-
-/**
- * Call OpenRouter API with streaming (and optional tools)
- */
-async function callOpenRouter(options: {
-  apiKey: string;
-  model: string;
-  messages: Array<{
-    role: string;
-    content?: string;
-    tool_calls?: unknown;
-    tool_call_id?: string;
-  }>;
-  tools?: Array<{
-    type: "function";
-    function: { name: string; description: string; parameters: unknown };
-  }>;
-  /** Called with each text delta (not accumulated content) */
-  onChunk: (delta: string) => Promise<void>;
-  /** Optional abort signal to cancel the request */
-  abortSignal?: AbortSignal;
-  /** OpenRouter attribution headers */
-  attribution?: OpenRouterAttribution;
-}): Promise<{
-  content: string;
-  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
-}> {
-  const body: Record<string, unknown> = {
-    model: options.model,
-    messages: options.messages,
-    stream: true,
-  };
-
-  if (options.tools && options.tools.length > 0) {
-    body.tools = options.tools;
-    body.tool_choice = "auto";
-  }
-
-  const response = await fetch(
-    "https://openrouter.ai/api/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${options.apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": options.attribution?.httpReferer ?? DEFAULT_HTTP_REFERER,
-        "X-Title": options.attribution?.xTitle ?? DEFAULT_X_TITLE,
-      },
-      body: JSON.stringify(body),
-      signal: options.abortSignal,
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-  }
-
-  if (!response.body) {
-    throw new Error("No response body from OpenRouter");
-  }
-
-  // Process the stream
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let fullContent = "";
-  let buffer = "";
-
-  // Track tool calls across chunks
-  const toolCallsMap = new Map<
-    number,
-    { id: string; name: string; arguments: string }
-  >();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? ""; // Keep incomplete line in buffer
-
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6);
-        if (data === "[DONE]") continue;
-
-        try {
-          const parsed = JSON.parse(data);
-          const choice = parsed.choices?.[0];
-
-          // Handle content delta - pass just the delta, not accumulated
-          const content = choice?.delta?.content;
-          if (content) {
-            fullContent += content;
-            await options.onChunk(content); // Pass delta, not accumulated
-          }
-
-          // Handle tool calls delta
-          const toolCallsDelta = choice?.delta?.tool_calls;
-          if (toolCallsDelta) {
-            for (const tcDelta of toolCallsDelta) {
-              const index = tcDelta.index ?? 0;
-
-              if (!toolCallsMap.has(index)) {
-                toolCallsMap.set(index, {
-                  id: tcDelta.id ?? "",
-                  name: tcDelta.function?.name ?? "",
-                  arguments: "",
-                });
-              }
-
-              const existing = toolCallsMap.get(index)!;
-              if (tcDelta.id) existing.id = tcDelta.id;
-              if (tcDelta.function?.name) existing.name = tcDelta.function.name;
-              if (tcDelta.function?.arguments) {
-                existing.arguments += tcDelta.function.arguments;
-              }
-            }
-          }
-        } catch {
-          // Ignore parse errors for malformed chunks
-        }
-      }
-    }
-  }
-
-  // Convert tool calls map to array
-  const toolCalls = Array.from(toolCallsMap.values()).filter(
-    (tc) => tc.id && tc.name
-  );
-
-  return {
-    content: fullContent,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-  };
 }

@@ -152,6 +152,26 @@ export interface DatabaseChatConfig {
    */
   maxToolResultChars?: number;
   /**
+   * Retries after the first provider attempt for transient failures
+   * (network errors, 408/429/5xx; default: 2). Retries never duplicate
+   * streamed content - they only cover the connection phase of a request.
+   */
+  maxRetries?: number;
+  /**
+   * Time-to-first-byte budget per provider attempt in ms (default: 30000).
+   * Long streams are legitimate, so this does not cap total generation time.
+   */
+  requestTimeoutMs?: number;
+  /**
+   * Runtime validation of the standard result contract for tools that
+   * declare `metadata.resultContract: "standard"`.
+   * - "warn" (default): log contract violations, pass results through.
+   * - "enforce": return the validation errors to the LLM instead of the
+   *   raw result so it can adapt.
+   * - "off": skip validation.
+   */
+  validateResultContract?: "off" | "warn" | "enforce";
+  /**
    * Resolve the caller's externalId server-side. When configured, all client
    * methods route through ownership-checked (*ForExternalId) endpoints -
    * consumers can no longer accidentally skip access control.
@@ -191,6 +211,12 @@ export interface SendMessageOptions {
   streamThrottleMs?: number;
   /** Override max tool result chars for this message */
   maxToolResultChars?: number;
+  /** Override provider retry count for this message */
+  maxRetries?: number;
+  /** Override the time-to-first-byte timeout for this message */
+  requestTimeoutMs?: number;
+  /** Override standard result contract validation for this message */
+  validateResultContract?: "off" | "warn" | "enforce";
   /**
    * Explicit externalId. Overrides the configured getExternalId resolver.
    * Only use this if the value is derived server-side, never from client input.
@@ -202,6 +228,15 @@ export interface SendMessageResult {
   success: boolean;
   content?: string;
   error?: string;
+  /**
+   * Machine-readable failure classification (e.g. "rate_limited",
+   * "unauthorized", "aborted"). Absent on success.
+   */
+  errorCode?: string;
+  /** Whether the failure was transient in nature (advisory). */
+  retryable?: boolean;
+  /** Set when generation stopped because maxToolLoops was exhausted. */
+  stoppedReason?: string;
   /** Tool calls that were executed (for debugging/logging) */
   toolCalls?: Array<{ name: string; args: unknown; result: unknown }>;
 }
@@ -472,6 +507,11 @@ export class DatabaseChatClient {
           options.streamThrottleMs ?? this.config.streamThrottleMs,
         maxToolResultChars:
           options.maxToolResultChars ?? this.config.maxToolResultChars,
+        maxRetries: options.maxRetries ?? this.config.maxRetries,
+        requestTimeoutMs:
+          options.requestTimeoutMs ?? this.config.requestTimeoutMs,
+        validateResultContract:
+          options.validateResultContract ?? this.config.validateResultContract,
         httpReferer: this.config.httpReferer,
         xTitle: this.config.xTitle,
       },
