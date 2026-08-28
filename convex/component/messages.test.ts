@@ -19,6 +19,52 @@ describe("databaseChat messages", () => {
     });
   }
 
+  describe("addForExternalId", () => {
+    it("adds a message when the externalId matches the conversation owner", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+
+      const messageId = await t.mutation(api.messages.addForExternalId, {
+        conversationId,
+        externalId: "user:test",
+        role: "user",
+        content: "hello",
+      });
+
+      expect(messageId).toBeDefined();
+      const messages = await t.query(api.messages.list, { conversationId });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe("hello");
+    });
+
+    it("throws Not found for a wrong externalId", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+
+      await expect(
+        t.mutation(api.messages.addForExternalId, {
+          conversationId,
+          externalId: "user:attacker",
+          role: "user",
+          content: "hello",
+        })
+      ).rejects.toThrow("Not found");
+    });
+
+    it("throws Not found for a missing conversation", async () => {
+      const t = setupTest();
+
+      await expect(
+        t.mutation(api.messages.addForExternalId, {
+          conversationId: "10000;conversations" as any,
+          externalId: "user:test",
+          role: "user",
+          content: "hello",
+        })
+      ).rejects.toThrow("Not found");
+    });
+  });
+
   describe("add", () => {
     it("should add a user message", async () => {
       const t = setupTest();

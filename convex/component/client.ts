@@ -73,18 +73,16 @@
  * See the component's chat.ts for an example of delta-based streaming.
  */
 
-import type {
-  GenericActionCtx,
-  GenericMutationCtx,
-  GenericQueryCtx,
-} from "convex/server";
+import type { FunctionReference } from "convex/server";
 import type { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 import type { TableInfo, SchemaToolHandlers } from "./schemaTools";
 import type {
   DatabaseChatSendResult,
   ResultContractValidation,
 } from "./chat";
+import { buildMessagesWithTools } from "./chat";
 import { generateToolsFromSchema } from "./schemaTools";
 import { formatToolsForLLM, findTool, validateToolArgs } from "./tools";
 import { executeToolHandler } from "./toolExecution";
@@ -96,10 +94,40 @@ import {
 // Type for the component API (what apps get from components.databaseChat)
 type ComponentApi = typeof api;
 
-// Context types for different function types
-type QueryCtx = GenericQueryCtx<any>;
-type MutationCtx = GenericMutationCtx<any>;
-type ActionCtx = GenericActionCtx<any>;
+interface ClientQueryCtx {
+  runQuery: <Args extends Record<string, unknown>, Result>(
+    query: FunctionReference<"query", "public" | "internal", Args, Result>,
+    args: Args,
+  ) => Promise<Result>;
+}
+
+interface ClientMutationCtx {
+  runMutation: <Args extends Record<string, unknown>, Result>(
+    mutation: FunctionReference<
+      "mutation",
+      "public" | "internal",
+      Args,
+      Result
+    >,
+    args: Args,
+  ) => Promise<Result>;
+}
+
+interface ClientActionCtx {
+  runAction: <Args extends Record<string, unknown>, Result>(
+    action: FunctionReference<"action", "public" | "internal", Args, Result>,
+    args: Args,
+  ) => Promise<Result>;
+}
+
+type QueryCtx = ClientQueryCtx;
+type MutationCtx = ClientMutationCtx;
+type ActionCtx = ClientActionCtx;
+
+const asConversationId = (id: string): Id<"conversations"> =>
+  id as Id<"conversations">;
+const asStreamId = (id: string): Id<"streamingMessages"> =>
+  id as Id<"streamingMessages">;
 
 export interface DatabaseChatConfig {
   /** Default model to use (default: "openai/gpt-4o") */
@@ -275,7 +303,7 @@ export class DatabaseChatClient {
    * This is called by the chat action when the LLM requests a tool.
    */
   async executeTool(
-    ctx: ActionCtx,
+    ctx: ClientActionCtx & ClientQueryCtx & ClientMutationCtx,
     toolName: string,
     args: Record<string, unknown>
   ): Promise<{ success: boolean; result?: unknown; error?: string }> {
@@ -354,7 +382,7 @@ export class DatabaseChatClient {
   ) {
     const externalId = await this.resolveExternalId(ctx, options?.externalId);
     return await ctx.runQuery(this.component.conversations.getForExternalId, {
-      conversationId: conversationId as any,
+      conversationId: asConversationId(conversationId),
       externalId,
     });
   }
@@ -380,7 +408,7 @@ export class DatabaseChatClient {
   ) {
     const externalId = await this.resolveExternalId(ctx, options?.externalId);
     return await ctx.runQuery(this.component.messages.listForExternalId, {
-      conversationId: conversationId as any,
+      conversationId: asConversationId(conversationId),
       externalId,
       limit: options?.limit ?? this.config.maxMessagesForDisplay ?? 100,
     });
@@ -397,7 +425,7 @@ export class DatabaseChatClient {
   ) {
     const externalId = await this.resolveExternalId(ctx, options?.externalId);
     return await ctx.runQuery(this.component.stream.getStreamForExternalId, {
-      conversationId: conversationId as any,
+      conversationId: asConversationId(conversationId),
       externalId,
     });
   }
@@ -423,7 +451,7 @@ export class DatabaseChatClient {
   ) {
     const externalId = await this.resolveExternalId(ctx, options?.externalId);
     return await ctx.runQuery(this.component.stream.listDeltasForExternalId, {
-      streamId: streamId as any,
+      streamId: asStreamId(streamId),
       externalId,
       cursor,
     });
@@ -441,7 +469,7 @@ export class DatabaseChatClient {
   ): Promise<boolean> {
     const externalId = await this.resolveExternalId(ctx, options?.externalId);
     return await ctx.runMutation(this.component.stream.abortForExternalId, {
-      conversationId: conversationId as any,
+      conversationId: asConversationId(conversationId),
       externalId,
       reason,
     });
@@ -460,7 +488,7 @@ export class DatabaseChatClient {
   ): Promise<SendMessageResult> {
     const externalId = await this.resolveExternalId(ctx, options.externalId);
     return await ctx.runAction(this.component.chat.sendForExternalId, {
-      conversationId: options.conversationId as any,
+      conversationId: asConversationId(options.conversationId),
       externalId,
       message: options.message,
       config: {
@@ -513,17 +541,20 @@ export class DatabaseChatClient {
     conversationId: string,
     role: "user" | "assistant" | "tool",
     content: string,
-    options?: {
+    options: {
+      externalId?: string;
       toolCalls?: Array<{ id: string; name: string; arguments: string }>;
       toolResults?: Array<{ toolCallId: string; result: string }>;
-    }
+    } = {}
   ): Promise<string> {
-    return await ctx.runMutation(this.component.messages.add, {
-      conversationId: conversationId as any,
+    const externalId = await this.resolveExternalId(ctx, options.externalId);
+    return await ctx.runMutation(this.component.messages.addForExternalId, {
+      conversationId: asConversationId(conversationId),
+      externalId,
       role,
       content,
-      toolCalls: options?.toolCalls,
-      toolResults: options?.toolResults,
+      toolCalls: options.toolCalls,
+      toolResults: options.toolResults,
     });
   }
 
@@ -544,21 +575,26 @@ export class DatabaseChatClient {
     ctx: QueryCtx,
     conversationId: string,
     options?: {
+      externalId?: string;
       systemPrompt?: string;
       includeTools?: boolean;
       toolGuidance?: ToolGuidanceOption;
     }
   ): Promise<{
-    messages: Array<{ role: string; content: string }>;
+    messages: ReturnType<typeof buildMessagesWithTools>;
     tools?: ReturnType<typeof formatToolsForLLM>;
   }> {
-    // Use LLM-specific limit for context window efficiency
-    const messages = await ctx.runQuery(this.component.messages.list, {
-      conversationId: conversationId as any,
-      limit: this.config.maxMessagesForLLM ?? 50,
-    });
+    const externalId = await this.resolveExternalId(ctx, options?.externalId);
 
-    const formatted: Array<{ role: string; content: string }> = [];
+    // Use LLM-specific limit for context window efficiency
+    const messages = await ctx.runQuery(
+      this.component.messages.listForExternalId,
+      {
+        conversationId: asConversationId(conversationId),
+        externalId,
+        limit: this.config.maxMessagesForLLM ?? 50,
+      },
+    );
 
     const basePrompt = options?.systemPrompt ?? this.config.systemPrompt ?? "";
     const systemPrompt =
@@ -568,30 +604,21 @@ export class DatabaseChatClient {
           })
         : basePrompt;
 
-    if (systemPrompt) {
-      formatted.push({ role: "system", content: systemPrompt });
-    }
-
-    // Add conversation messages
-    for (const msg of messages) {
-      if (msg.role === "user" || msg.role === "assistant") {
-        formatted.push({ role: msg.role, content: msg.content });
-      }
-      // Handle tool messages
-      if (msg.role === "tool" && msg.toolResults) {
-        for (const result of msg.toolResults) {
-          formatted.push({
-            role: "tool",
-            content: result.result,
-          });
-        }
-      }
-    }
-
     const result: {
-      messages: Array<{ role: string; content: string }>;
+      messages: Array<{
+        role: string;
+        content?: string;
+        tool_calls?: Array<{
+          id: string;
+          type: "function";
+          function: { name: string; arguments: string };
+        }>;
+        tool_call_id?: string;
+      }>;
       tools?: ReturnType<typeof formatToolsForLLM>;
-    } = { messages: formatted };
+    } = {
+      messages: buildMessagesWithTools(messages, systemPrompt),
+    };
 
     // Include tools if configured and requested
     if (this.hasTools() && options?.includeTools !== false) {

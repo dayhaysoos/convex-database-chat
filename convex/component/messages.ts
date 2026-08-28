@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import type { ReadContext } from "./contextTypes";
+import type { ReadContext, WriteContext } from "./contextTypes";
 import { requireConversationExternalId } from "./access";
 
 // Shared validators
@@ -51,28 +51,62 @@ export const add = mutation({
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
-    // Verify conversation exists
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) {
       throw new Error("Conversation not found");
     }
 
-    const now = Date.now();
-
-    // Update conversation's updatedAt
-    await ctx.db.patch(args.conversationId, { updatedAt: now });
-
-    return await ctx.db.insert("messages", {
-      conversationId: args.conversationId,
-      role: args.role,
-      content: args.content,
-      toolCalls: args.toolCalls,
-      toolResults: args.toolResults,
-      partial: args.partial,
-      createdAt: now,
-    });
+    return await insertMessage(ctx, args.conversationId, args);
   },
 });
+
+export const addForExternalId = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    externalId: v.string(),
+    role: messageRoleValidator,
+    content: v.string(),
+    toolCalls: v.optional(v.array(toolCallValidator)),
+    toolResults: v.optional(v.array(toolResultValidator)),
+    partial: v.optional(v.boolean()),
+  },
+  returns: v.id("messages"),
+  handler: async (ctx, args) => {
+    await requireConversationExternalId(
+      ctx,
+      args.conversationId,
+      args.externalId
+    );
+
+    return await insertMessage(ctx, args.conversationId, args);
+  },
+});
+
+async function insertMessage(
+  ctx: WriteContext,
+  conversationId: Id<"conversations">,
+  message: {
+    role: "user" | "assistant" | "tool";
+    content: string;
+    toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+    toolResults?: Array<{ toolCallId: string; result: string }>;
+    partial?: boolean;
+  }
+): Promise<Id<"messages">> {
+  const now = Date.now();
+
+  await ctx.db.patch(conversationId, { updatedAt: now });
+
+  return await ctx.db.insert("messages", {
+    conversationId,
+    role: message.role,
+    content: message.content,
+    toolCalls: message.toolCalls,
+    toolResults: message.toolResults,
+    partial: message.partial,
+    createdAt: now,
+  });
+}
 
 /**
  * List messages in a conversation (oldest first for chat display).
