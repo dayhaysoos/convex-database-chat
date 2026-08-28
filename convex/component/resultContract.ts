@@ -340,3 +340,76 @@ function validatePagination(
     );
   }
 }
+
+export function capToolResult(result: unknown, maxChars: number): string {
+  const json = JSON.stringify(result);
+  if (json.length <= maxChars) {
+    return json;
+  }
+  return JSON.stringify({
+    truncated: true,
+    originalLength: json.length,
+    data: json.slice(0, maxChars),
+  });
+}
+
+export interface ToolResultViolation {
+  errors: DatabaseChatResultValidationError[];
+  message: string;
+}
+
+export interface ShapedToolResult {
+  toolResult: string;
+  record: unknown;
+  violation?: ToolResultViolation;
+}
+
+export interface ShapeToolResultOptions {
+  validation: "off" | "warn" | "enforce";
+  maxChars: number;
+}
+
+export function shapeToolResult(
+  tool: { name: string; metadata?: { resultContract?: "standard" } },
+  result: unknown,
+  options: ShapeToolResultOptions
+): ShapedToolResult {
+  const passThrough = (): ShapedToolResult => ({
+    toolResult: capToolResult(result, options.maxChars),
+    record: result,
+  });
+
+  const applies =
+    options.validation !== "off" &&
+    tool.metadata?.resultContract === "standard";
+  if (!applies) {
+    return passThrough();
+  }
+
+  const errors = validateToolResultContract(result);
+  if (errors.length === 0) {
+    return passThrough();
+  }
+
+  if (options.validation === "enforce") {
+    return {
+      toolResult: capToolResult(
+        {
+          error: "Tool result violated the standard result contract",
+          contractErrors: errors,
+        },
+        options.maxChars
+      ),
+      record: { contractErrors: errors },
+    };
+  }
+
+  return {
+    toolResult: passThrough().toolResult,
+    record: result,
+    violation: {
+      errors,
+      message: `Tool ${tool.name} violated the standard result contract`,
+    },
+  };
+}

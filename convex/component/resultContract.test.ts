@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isDatabaseChatToolResult,
+  shapeToolResult,
   validateToolResultContract,
   type DatabaseChatToolResult,
 } from "./resultContract";
@@ -165,5 +166,96 @@ describe("result contract", () => {
         expect.objectContaining({ code: "invalid_pagination_page_size" }),
       ])
     );
+  });
+});
+
+describe("shapeToolResult", () => {
+  const conformingResult: DatabaseChatToolResult = {
+    data: [{ id: "record_1" }],
+    meta: {
+      scope: { type: "workspace", id: "workspace_123" },
+      returned: 1,
+      exhaustive: true,
+      truncated: false,
+      sampled: false,
+    },
+  };
+  const violatingResult = {
+    data: [{ id: "record_1" }],
+    meta: { returned: 5, exhaustive: true, truncated: false, sampled: false },
+  };
+  const standardTool = {
+    name: "listProducts",
+    metadata: { resultContract: "standard" as const },
+  };
+  const rawTool = { name: "rawSearch" };
+
+  it("passes results through for tools without the standard marker", () => {
+    const shaped = shapeToolResult(rawTool, violatingResult, {
+      validation: "enforce",
+      maxChars: 16000,
+    });
+
+    expect(shaped.toolResult).toBe(JSON.stringify(violatingResult));
+    expect(shaped.record).toBe(violatingResult);
+    expect(shaped.violation).toBeUndefined();
+  });
+
+  it("passes conforming standard results through unchanged", () => {
+    const shaped = shapeToolResult(standardTool, conformingResult, {
+      validation: "enforce",
+      maxChars: 16000,
+    });
+
+    expect(shaped.toolResult).toBe(JSON.stringify(conformingResult));
+    expect(shaped.record).toBe(conformingResult);
+    expect(shaped.violation).toBeUndefined();
+  });
+
+  it("skips validation entirely in off mode", () => {
+    const shaped = shapeToolResult(standardTool, violatingResult, {
+      validation: "off",
+      maxChars: 16000,
+    });
+
+    expect(shaped.violation).toBeUndefined();
+    expect(shaped.toolResult).toBe(JSON.stringify(violatingResult));
+  });
+
+  it("enforce replaces a violating result with a capped error envelope", () => {
+    const shaped = shapeToolResult(standardTool, violatingResult, {
+      validation: "enforce",
+      maxChars: 16000,
+    });
+
+    const parsed = JSON.parse(shaped.toolResult);
+    expect(parsed.error).toContain("standard result contract");
+    expect(parsed.contractErrors.length).toBeGreaterThan(0);
+    expect(shaped.record).toEqual({
+      contractErrors: expect.any(Array),
+    });
+  });
+
+  it("caps the enforce error envelope when maxChars is tiny", () => {
+    const shaped = shapeToolResult(standardTool, violatingResult, {
+      validation: "enforce",
+      maxChars: 10,
+    });
+
+    const parsed = JSON.parse(shaped.toolResult);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.data.length).toBe(10);
+  });
+
+  it("warn keeps the raw result but reports the violation", () => {
+    const shaped = shapeToolResult(standardTool, violatingResult, {
+      validation: "warn",
+      maxChars: 16000,
+    });
+
+    expect(shaped.toolResult).toBe(JSON.stringify(violatingResult));
+    expect(shaped.record).toBe(violatingResult);
+    expect(shaped.violation?.message).toContain("listProducts");
+    expect(shaped.violation?.errors.length).toBeGreaterThan(0);
   });
 });

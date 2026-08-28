@@ -618,6 +618,43 @@ describe("databaseChat chat", () => {
       expect(toolResult.error).toContain("standard result contract");
     });
 
+    it("warn keeps the raw tool result and logs the violation", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const tool = {
+        ...(await createTool()),
+        metadata: { kind: "detail" as const, resultContract: "standard" as const },
+      };
+      const argsJson = JSON.stringify({ conversationId });
+
+      let call = 0;
+      stubFetch(
+        vi.fn(async () => {
+          call++;
+          if (call === 1) {
+            return sseResponse([toolCallChunk("call_1", "getLatest", argsJson)]);
+          }
+          return sseResponse([contentChunk("Noted.")]);
+        })
+      );
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "What is the latest message?",
+        config: {
+          apiKey: "test-key",
+          systemPrompt: "Be helpful.",
+          tools: [tool],
+          validateResultContract: "warn",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      const record = result.toolCalls?.[0].result as Record<string, unknown>;
+      expect(record).not.toHaveProperty("contractErrors");
+      expect(record.role).toBe("user");
+    });
+
     it("should report max_tool_loops and never persist an empty final message", async () => {
       const t = setupTest();
       const conversationId = await createConversation(t);
