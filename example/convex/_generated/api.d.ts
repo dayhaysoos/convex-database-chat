@@ -65,9 +65,11 @@ export declare const components: {
             apiKey: string;
             httpReferer?: string;
             maxMessagesForLLM?: number;
+            maxRetries?: number;
             maxToolLoops?: number;
             maxToolResultChars?: number;
             model?: string;
+            requestTimeoutMs?: number;
             streamThrottleMs?: number;
             systemPrompt?: string;
             toolContext?: any;
@@ -93,6 +95,7 @@ export declare const components: {
                 type: "object";
               };
             }>;
+            validateResultContract?: "off" | "warn" | "enforce";
             xTitle?: string;
           };
           conversationId: string;
@@ -101,6 +104,17 @@ export declare const components: {
         {
           content?: string;
           error?: string;
+          errorCode?:
+            | "unauthorized"
+            | "rate_limited"
+            | "provider_error"
+            | "network_error"
+            | "timeout"
+            | "aborted"
+            | "invalid_request"
+            | "unknown";
+          retryable?: boolean;
+          stoppedReason?: "max_tool_loops";
           success: boolean;
           toolCalls?: Array<{ args: any; name: string; result: any }>;
         }
@@ -113,9 +127,11 @@ export declare const components: {
             apiKey: string;
             httpReferer?: string;
             maxMessagesForLLM?: number;
+            maxRetries?: number;
             maxToolLoops?: number;
             maxToolResultChars?: number;
             model?: string;
+            requestTimeoutMs?: number;
             streamThrottleMs?: number;
             systemPrompt?: string;
             toolContext?: any;
@@ -141,6 +157,7 @@ export declare const components: {
                 type: "object";
               };
             }>;
+            validateResultContract?: "off" | "warn" | "enforce";
             xTitle?: string;
           };
           conversationId: string;
@@ -150,6 +167,17 @@ export declare const components: {
         {
           content?: string;
           error?: string;
+          errorCode?:
+            | "unauthorized"
+            | "rate_limited"
+            | "provider_error"
+            | "network_error"
+            | "timeout"
+            | "aborted"
+            | "invalid_request"
+            | "unknown";
+          retryable?: boolean;
+          stoppedReason?: "max_tool_loops";
           success: boolean;
           toolCalls?: Array<{ args: any; name: string; result: any }>;
         }

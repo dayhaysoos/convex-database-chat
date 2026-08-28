@@ -403,6 +403,9 @@ export const sendMessage = action({
     success: v.boolean(),
     content: v.optional(v.string()),
     error: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
+    retryable: v.optional(v.boolean()),
+    stoppedReason: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     const apiKey = process.env.OPENROUTER_API_KEY;
@@ -434,17 +437,28 @@ export const sendMessage = action({
         model: "anthropic/claude-sonnet-4",
         systemPrompt: SYSTEM_PROMPT,
         toolGuidance: "auto",
+        validateResultContract: "enforce",
         tools,
         toolContext: {
           storeId: "demo-store",
         },
       },
-    })) as { success: boolean; content?: string; error?: string };
+    })) as {
+      success: boolean;
+      content?: string;
+      error?: string;
+      errorCode?: string;
+      retryable?: boolean;
+      stoppedReason?: string;
+    };
 
     return {
       success: result.success,
       content: result.content,
       error: result.error,
+      errorCode: result.errorCode,
+      retryable: result.retryable,
+      stoppedReason: result.stoppedReason,
     };
   },
 });

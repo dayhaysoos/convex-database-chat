@@ -1,13 +1,66 @@
 /// <reference types="vite/client" />
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { convexTest } from "convex-test";
-import { getFunctionName } from "convex/server";
+import { createFunctionHandle, getFunctionName } from "convex/server";
 import schema from "./schema";
 import { api } from "./_generated/api";
 import { executeToolWithContext } from "./toolExecution";
 import { buildMessagesWithTools, capToolResult } from "./chat";
 import { DeltaStreamer } from "./deltaStreamer";
 import type { DatabaseChatTool } from "./tools";
+
+const encoder = new TextEncoder();
+
+function sseData(payload: unknown): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function contentChunk(text: string): string {
+  return sseData({ choices: [{ delta: { content: text } }] });
+}
+
+function toolCallChunk(
+  id: string,
+  name: string,
+  argsJson: string
+): string {
+  return sseData({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              id,
+              type: "function",
+              function: { name, arguments: argsJson },
+            },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+function sseResponse(chunks: string[]): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function stubFetch(mock: ReturnType<typeof vi.fn>) {
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -274,6 +327,45 @@ describe("databaseChat chat", () => {
       expect(result[1].content).toBeUndefined();
       expect(result[1].tool_calls).toHaveLength(1);
     });
+
+    it("drops leading tool results orphaned by history truncation", () => {
+      const messages = [
+        {
+          role: "tool" as const,
+          content: "",
+          toolResults: [{ toolCallId: "c9", result: '{"stale":true}' }],
+        },
+        { role: "assistant" as const, content: "Answer" },
+      ];
+
+      const result = buildMessagesWithTools(messages, "sys");
+
+      expect(result).toEqual([
+        { role: "system", content: "sys" },
+        { role: "assistant", content: "Answer" },
+      ]);
+    });
+
+    it("keeps tool results that follow their assistant tool_calls in the window", () => {
+      const messages = [
+        { role: "user" as const, content: "hi" },
+        {
+          role: "assistant" as const,
+          content: "",
+          toolCalls: [{ id: "c1", name: "t", arguments: "{}" }],
+        },
+        {
+          role: "tool" as const,
+          content: "",
+          toolResults: [{ toolCallId: "c1", result: "{}" }],
+        },
+      ];
+
+      const result = buildMessagesWithTools(messages, "sys");
+
+      expect(result).toHaveLength(4);
+      expect(result[3].tool_call_id).toBe("c1");
+    });
   });
 
   describe("capToolResult", () => {
@@ -342,15 +434,216 @@ describe("databaseChat chat", () => {
     });
   });
 
-  // TODO: Add integration test with mocked fetch for chat.send
-  // This would require setting up MSW or similar to mock OpenRouter responses
-  describe.skip("chat.send integration", () => {
-    it("should send a message and get a response", async () => {
-      // Would need to mock fetch to OpenRouter
+  describe("chat.send integration", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
     });
 
-    it("should handle OpenRouter errors gracefully", async () => {
-      // Would need to mock fetch to return an error
+    async function createTool() {
+      const handle = await createFunctionHandle(api.messages.getLatest);
+      const tool: DatabaseChatTool = {
+        name: "getLatest",
+        description: "Get the latest message in the conversation",
+        parameters: {
+          type: "object",
+          properties: {
+            conversationId: { type: "string", description: "Conversation ID" },
+          },
+          required: ["conversationId"],
+        },
+        handler: handle,
+      };
+      return tool;
+    }
+
+    it("should send a message and get a streaming response", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const fetchMock = stubFetch(
+        vi.fn(async () =>
+          sseResponse([contentChunk("Hello!"), contentChunk(" How can I help?")])
+        )
+      );
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "Hi",
+        config: { apiKey: "test-key", systemPrompt: "Be helpful." },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe("Hello! How can I help?");
+      expect(result.errorCode).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const messages = await t.query(api.messages.list, { conversationId });
+      expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+      expect(messages[1].content).toBe("Hello! How can I help?");
+
+      const streamState = await t.query(api.stream.getStream, {
+        conversationId,
+      });
+      expect(streamState?.status).toBe("finished");
+    });
+
+    it("should handle OpenRouter errors gracefully with typed codes", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      stubFetch(
+        vi.fn(async () => new Response("bad key", { status: 401 }))
+      );
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "Hi",
+        config: { apiKey: "invalid-key", systemPrompt: "Be helpful." },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("401");
+      expect(result.errorCode).toBe("unauthorized");
+      expect(result.retryable).toBe(false);
+    });
+
+    it("should retry transient provider errors and succeed", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const fetchMock = vi.fn(async () => new Response("boom", { status: 503 }));
+      fetchMock.mockImplementationOnce(async () =>
+        new Response("boom", { status: 503 })
+      );
+      fetchMock.mockImplementationOnce(async () =>
+        sseResponse([contentChunk("recovered")])
+      );
+      stubFetch(fetchMock);
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "Hi",
+        config: {
+          apiKey: "test-key",
+          systemPrompt: "Be helpful.",
+          maxRetries: 2,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe("recovered");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("should execute tool calls and return the final answer", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const tool = await createTool();
+      const argsJson = JSON.stringify({ conversationId });
+
+      let call = 0;
+      stubFetch(
+        vi.fn(async () => {
+          call++;
+          if (call === 1) {
+            return sseResponse([toolCallChunk("call_1", "getLatest", argsJson)]);
+          }
+          return sseResponse([
+            contentChunk("The latest message is from the user."),
+          ]);
+        })
+      );
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "What is the latest message?",
+        config: {
+          apiKey: "test-key",
+          systemPrompt: "Be helpful.",
+          tools: [tool],
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe("The latest message is from the user.");
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls?.[0].name).toBe("getLatest");
+
+      const messages = await t.query(api.messages.list, { conversationId });
+      expect(messages.map((m) => m.role)).toEqual([
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+      ]);
+      const toolResult = JSON.parse(messages[2].toolResults![0].result);
+      expect(toolResult.role).toBe("user");
+    });
+
+    it("should enforce the standard result contract when configured", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const tool = {
+        ...(await createTool()),
+        metadata: { kind: "detail" as const, resultContract: "standard" as const },
+      };
+      const argsJson = JSON.stringify({ conversationId });
+
+      let call = 0;
+      stubFetch(
+        vi.fn(async () => {
+          call++;
+          if (call === 1) {
+            return sseResponse([toolCallChunk("call_1", "getLatest", argsJson)]);
+          }
+          return sseResponse([contentChunk("The tool result was invalid.")]);
+        })
+      );
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "What is the latest message?",
+        config: {
+          apiKey: "test-key",
+          systemPrompt: "Be helpful.",
+          tools: [tool],
+          validateResultContract: "enforce",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.toolCalls?.[0].result).toHaveProperty("contractErrors");
+      const toolResult = JSON.parse(
+        (
+          await t.query(api.messages.list, { conversationId })
+        )[2].toolResults![0].result
+      );
+      expect(toolResult.error).toContain("standard result contract");
+    });
+
+    it("should report max_tool_loops and never persist an empty final message", async () => {
+      const t = setupTest();
+      const conversationId = await createConversation(t);
+      const tool = await createTool();
+      const argsJson = JSON.stringify({ conversationId });
+
+      stubFetch(
+        vi.fn(async () =>
+          sseResponse([toolCallChunk("call_1", "getLatest", argsJson)])
+        )
+      );
+
+      const result = await t.action(api.chat.send, {
+        conversationId,
+        message: "What is the latest message?",
+        config: {
+          apiKey: "test-key",
+          systemPrompt: "Be helpful.",
+          tools: [tool],
+          maxToolLoops: 2,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.stoppedReason).toBe("max_tool_loops");
+      expect(result.content).toContain("Stopped after 2 tool rounds");
     });
   });
 });

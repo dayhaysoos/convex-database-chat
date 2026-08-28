@@ -72,6 +72,7 @@ import {
 } from "react";
 import { useQuery, useAction, useMutation } from "convex/react";
 import type { FunctionReference } from "convex/server";
+import type { OpenRouterErrorCode } from "./openrouter/errors.js";
 
 // =============================================================================
 // Types
@@ -431,10 +432,15 @@ export function useDatabaseChat(
       setLastMessage(message);
 
       try {
-        const result = await sendMessageAction({
+        const result = (await sendMessageAction({
           conversationId,
           message: message.trim(),
-        });
+        })) as {
+          success: boolean;
+          content?: string;
+          error?: string;
+          errorCode?: OpenRouterErrorCode;
+        };
 
         // Check if this is still the current request, component is mounted, and not aborted
         if (
@@ -446,8 +452,8 @@ export function useDatabaseChat(
         }
 
         if (!result.success) {
-          // Don't show "Stream aborted" as an error - it's expected when user stops
-          if (result.error && !result.error.toLowerCase().includes("aborted")) {
+          const aborted = result.errorCode === "aborted";
+          if (result.error && !aborted) {
             const err = new Error(result.error);
             setError(err);
             onError?.(err);

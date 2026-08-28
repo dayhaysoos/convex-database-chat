@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- **OpenRouter provider module** (`src/openrouter/`): the chat-completions and
+  embedding calls now share one transport with typed errors, retry, and
+  timeout handling. A single attempt-runner owns the connection,
+  classification, and backoff protocol for both call types; all provider
+  failures surface as `OpenRouterError` with a machine-readable `code` and a
+  `retryable` flag.
+- Typed error codes on send results: failed sends return `errorCode`
+  (`unauthorized`, `rate_limited`, `provider_error`, `network_error`,
+  `timeout`, `aborted`, `invalid_request`, `unknown`) and `retryable` next to
+  the existing `error` message.
+- Automatic retries for transient failures (network errors, 408/429/5xx) with
+  exponential backoff, full jitter, and `Retry-After` support. Retries cover
+  only the connection phase of a request - content that has already streamed
+  is never duplicated. New config: `maxRetries` (default 2).
+- Time-to-first-byte timeout per provider attempt (default 30s, configurable
+  via `requestTimeoutMs`). Total generation time remains uncapped; the
+  existing stream heartbeat still bounds zombie streams.
+- `generateEmbedding` now sends the same OpenRouter attribution defaults as
+  the chat path (`HTTP-Referer` / `X-Title`) and accepts an `abortSignal`.
+- Runtime validation of the standard result contract for tools declaring
+  `metadata.resultContract: "standard"`. New config
+  `validateResultContract`: `"warn"` (default) logs violations and passes the
+  result through; `"enforce"` returns the validation errors to the LLM
+  instead of the malformed result; `"off"` skips validation.
+- `stoppedReason: "max_tool_loops"` on the send result when the tool loop is
+  exhausted without a final answer.
+
+### Fixed
+
+- Trailing SSE lines without a terminating newline were silently dropped at
+  the end of a stream; they are now flushed and processed.
+- Conversation-history truncation could start the LLM context with tool
+  results whose paired assistant `tool_calls` message fell outside the
+  window, producing a payload providers reject. Orphaned tool messages are
+  now dropped.
+- Tool loops that exhaust `maxToolLoops` no longer persist a silently empty
+  final assistant message; the persisted message explains the cutoff.
+
+### Changed
+
+- `validateResultContract` now validates against the closed set
+  (`"off" | "warn" | "enforce"`) at the function boundary; unknown values
+  throw a validation error instead of silently running in warn mode. Send
+  results carry the typed unions (`errorCode`, `stoppedReason`), and the
+  React hook detects aborts solely via `errorCode: "aborted"`.
+- **Breaking** (`./vector` entrypoint): `generateEmbedding` options
+  `referer` and `title` are renamed to `httpReferer` and `xTitle`, matching
+  the chat surface. The function now also throws `OpenRouterError` (an
+  `Error` subclass, so existing `instanceof Error` checks keep working) and
+  retries transient failures with a whole-request timeout (default 30s).
+
 ## [0.3.1] - 2026-08-21
 
 ### Changed

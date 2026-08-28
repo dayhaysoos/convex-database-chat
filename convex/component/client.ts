@@ -81,6 +81,10 @@ import type {
 import type { api } from "./_generated/api";
 import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 import type { TableInfo, SchemaToolHandlers } from "./schemaTools";
+import type {
+  DatabaseChatSendResult,
+  ResultContractValidation,
+} from "./chat";
 import { generateToolsFromSchema } from "./schemaTools";
 import { formatToolsForLLM, findTool, validateToolArgs } from "./tools";
 import { executeToolHandler } from "./toolExecution";
@@ -151,6 +155,9 @@ export interface DatabaseChatConfig {
    * Oversized results are truncated and flagged with `{ truncated: true }`.
    */
   maxToolResultChars?: number;
+  maxRetries?: number;
+  requestTimeoutMs?: number;
+  validateResultContract?: ResultContractValidation;
   /**
    * Resolve the caller's externalId server-side. When configured, all client
    * methods route through ownership-checked (*ForExternalId) endpoints -
@@ -191,6 +198,9 @@ export interface SendMessageOptions {
   streamThrottleMs?: number;
   /** Override max tool result chars for this message */
   maxToolResultChars?: number;
+  maxRetries?: number;
+  requestTimeoutMs?: number;
+  validateResultContract?: ResultContractValidation;
   /**
    * Explicit externalId. Overrides the configured getExternalId resolver.
    * Only use this if the value is derived server-side, never from client input.
@@ -198,13 +208,7 @@ export interface SendMessageOptions {
   externalId?: string;
 }
 
-export interface SendMessageResult {
-  success: boolean;
-  content?: string;
-  error?: string;
-  /** Tool calls that were executed (for debugging/logging) */
-  toolCalls?: Array<{ name: string; args: unknown; result: unknown }>;
-}
+export type SendMessageResult = DatabaseChatSendResult;
 
 /**
  * Client for interacting with the DatabaseChat component.
@@ -472,6 +476,11 @@ export class DatabaseChatClient {
           options.streamThrottleMs ?? this.config.streamThrottleMs,
         maxToolResultChars:
           options.maxToolResultChars ?? this.config.maxToolResultChars,
+        maxRetries: options.maxRetries ?? this.config.maxRetries,
+        requestTimeoutMs:
+          options.requestTimeoutMs ?? this.config.requestTimeoutMs,
+        validateResultContract:
+          options.validateResultContract ?? this.config.validateResultContract,
         httpReferer: this.config.httpReferer,
         xTitle: this.config.xTitle,
       },

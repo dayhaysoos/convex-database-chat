@@ -5,8 +5,9 @@
  * import Convex runtime types. You own your schema, actions, and vector indexes.
  */
 
-/** Default OpenRouter embedding model. */
-export const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+export { generateEmbedding, DEFAULT_EMBEDDING_MODEL } from "./openrouter/index.js";
+export type { GenerateEmbeddingOptions } from "./openrouter/index.js";
+
 /** Default embedding vector dimensions for the default model. */
 export const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
 /** Alias for the common OpenAI small embedding dimensions. */
@@ -65,22 +66,6 @@ export interface VectorToolDefinition {
 }
 
 /**
- * Options for generateEmbedding.
- */
-export interface GenerateEmbeddingOptions {
-  /** OpenRouter API key. */
-  apiKey: string;
-  /** Text to embed. */
-  text: string;
-  /** Embedding model ID (OpenRouter). */
-  model?: string;
-  /** Optional HTTP-Referer header for OpenRouter analytics. */
-  referer?: string;
-  /** Optional X-Title header for OpenRouter analytics. */
-  title?: string;
-}
-
-/**
  * Options for defineVectorSearchTool.
  */
 export interface DefineVectorSearchToolOptions {
@@ -124,60 +109,6 @@ export type FormattedVectorResult<
   _id: IdType;
   _score?: number;
 } & (Fields extends readonly (keyof TDoc & string)[] ? Pick<TDoc, Fields[number]> : TDoc);
-
-/**
- * Generate an embedding using OpenRouter's embeddings API.
- */
-export async function generateEmbedding(
-  options: GenerateEmbeddingOptions
-): Promise<number[]> {
-  if (!options.apiKey) {
-    throw new Error("OpenRouter API key is required");
-  }
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${options.apiKey}`,
-    "Content-Type": "application/json",
-  };
-
-  if (options.referer) {
-    headers["HTTP-Referer"] = options.referer;
-  }
-
-  if (options.title) {
-    headers["X-Title"] = options.title;
-  }
-
-  const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: options.model ?? DEFAULT_EMBEDDING_MODEL,
-      input: options.text,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `OpenRouter embeddings error: ${response.status} - ${errorText}`
-    );
-  }
-
-  let data: { data?: Array<{ embedding?: unknown }> };
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error("OpenRouter embeddings response was not valid JSON");
-  }
-
-  const embedding = data.data?.[0]?.embedding;
-  if (!Array.isArray(embedding) || !embedding.every((v) => typeof v === "number")) {
-    throw new Error("OpenRouter embeddings response missing data");
-  }
-
-  return embedding;
-}
 
 /**
  * Define a vector search tool compatible with DatabaseChat.
