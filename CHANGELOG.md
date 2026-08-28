@@ -12,8 +12,10 @@ and this project adheres to
 
 - **OpenRouter provider module** (`src/openrouter/`): the chat-completions and
   embedding calls now share one transport with typed errors, retry, and
-  timeout handling. All provider failures surface as `OpenRouterError` with a
-  machine-readable `code` and a `retryable` flag.
+  timeout handling. A single attempt-runner owns the connection,
+  classification, and backoff protocol for both call types; all provider
+  failures surface as `OpenRouterError` with a machine-readable `code` and a
+  `retryable` flag.
 - Typed error codes on send results: failed sends return `errorCode`
   (`unauthorized`, `rate_limited`, `provider_error`, `network_error`,
   `timeout`, `aborted`, `invalid_request`, `unknown`) and `retryable` next to
@@ -25,6 +27,8 @@ and this project adheres to
 - Time-to-first-byte timeout per provider attempt (default 30s, configurable
   via `requestTimeoutMs`). Total generation time remains uncapped; the
   existing stream heartbeat still bounds zombie streams.
+- `generateEmbedding` now sends the same OpenRouter attribution defaults as
+  the chat path (`HTTP-Referer` / `X-Title`) and accepts an `abortSignal`.
 - Runtime validation of the standard result contract for tools declaring
   `metadata.resultContract: "standard"`. New config
   `validateResultContract`: `"warn"` (default) logs violations and passes the
@@ -46,11 +50,11 @@ and this project adheres to
 
 ### Changed
 
-- `generateEmbedding` now throws `OpenRouterError` (an `Error` subclass, so
-  existing `instanceof Error` checks keep working) and retries transient
-  failures with a whole-request timeout (default 30s). Its public signature
-  in `@dayhaysoos/convex-database-chat/vector` is unchanged aside from the
-  new optional options.
+- **Breaking** (`./vector` entrypoint): `generateEmbedding` options
+  `referer` and `title` are renamed to `httpReferer` and `xTitle`, matching
+  the chat surface. The function now also throws `OpenRouterError` (an
+  `Error` subclass, so existing `instanceof Error` checks keep working) and
+  retries transient failures with a whole-request timeout (default 30s).
 
 ## [0.3.1] - 2026-08-21
 

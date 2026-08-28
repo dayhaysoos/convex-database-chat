@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenRouterError, generateEmbedding } from "./index.js";
+import { generateEmbedding } from "./index.js";
+import { OpenRouterError } from "./errors.js";
+import { DEFAULT_HTTP_REFERER, DEFAULT_X_TITLE } from "./streaming.js";
 
 function embeddingResponse(): Response {
   return new Response(
@@ -25,11 +27,42 @@ describe("generateEmbedding", () => {
     });
 
     expect(embedding).toEqual([0.1, 0.2, 0.3]);
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({
+    const [_url, init] = fetchMock.mock.calls[0] as [
+      string,
+      { headers: Record<string, string>; body: string },
+    ];
+    expect(JSON.parse(init.body)).toEqual({
       model: "openai/text-embedding-3-small",
       input: "hello",
     });
+    expect(init.headers["HTTP-Referer"]).toBe(DEFAULT_HTTP_REFERER);
+    expect(init.headers["X-Title"]).toBe(DEFAULT_X_TITLE);
+  });
+
+  it("reports a pre-aborted signal as aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn(
+      async (_url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal?.aborted) {
+          throw Object.assign(new Error("The operation was aborted"), {
+            name: "AbortError",
+          });
+        }
+        return embeddingResponse();
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await generateEmbedding({
+      apiKey: "test-key",
+      text: "hello",
+      abortSignal: controller.signal,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(OpenRouterError);
+    expect(error.code).toBe("aborted");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries a retryable status and succeeds", async () => {

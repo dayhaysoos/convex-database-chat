@@ -1,14 +1,11 @@
+import { OpenRouterError } from "./errors.js";
+import { DEFAULT_RETRY_OPTIONS, type RetryOptions } from "./retry.js";
 import {
-  OpenRouterError,
-  isAbortError,
-  httpErrorFromResponse,
-} from "./errors.js";
-import {
-  DEFAULT_RETRY_OPTIONS,
-  abortableSleep,
-  backoffDelayMs,
-  type RetryOptions,
-} from "./retry.js";
+  runAttempt,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  type AttemptSession,
+  type AttemptSafety,
+} from "./attempt.js";
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -20,8 +17,6 @@ export interface OpenRouterAttribution {
 export const DEFAULT_HTTP_REFERER =
   "https://github.com/dayhaysoos/convex-database-chat";
 export const DEFAULT_X_TITLE = "DatabaseChat";
-
-export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface ChatCompletionMessage {
   role: string;
@@ -66,211 +61,40 @@ export async function streamChatCompletion(
     baseDelayMs: options.baseDelayMs ?? DEFAULT_RETRY_OPTIONS.baseDelayMs,
     maxDelayMs: options.maxDelayMs ?? DEFAULT_RETRY_OPTIONS.maxDelayMs,
   };
-  const requestTimeoutMs =
-    options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const callerSignal = options.abortSignal;
 
-  let contentEmitted = false;
-  const onChunk = async (delta: string) => {
-    contentEmitted = true;
-    await options.onChunk(delta);
-  };
-
-  for (let attempt = 1; ; attempt++) {
-    const session = beginAttempt(callerSignal, requestTimeoutMs);
-    let response: Response;
-
-    try {
-      response = await fetch(OPENROUTER_CHAT_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${options.apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer":
-            options.attribution?.httpReferer ?? DEFAULT_HTTP_REFERER,
-          "X-Title": options.attribution?.xTitle ?? DEFAULT_X_TITLE,
-        },
-        body: JSON.stringify(bodyFor(options)),
-        signal: session.controller.signal,
-      });
-    } catch (error) {
-      session.dispose();
-      await failOrRetry(
-        classifyFetchRejection(error, session, requestTimeoutMs),
-        { attempt, retry, callerSignal, contentEmitted: () => contentEmitted }
-      );
-      continue;
-    }
-
-    if (!response.ok) {
-      session.dispose();
-      const error = await httpErrorFromResponse(response);
-      await failOrRetry(error, {
-        attempt,
-        retry,
-        callerSignal,
-        contentEmitted: () => contentEmitted,
-      });
-      continue;
-    }
-
-    try {
-      return await consumeSseStream({
+  return runAttempt({
+    url: OPENROUTER_CHAT_URL,
+    init: {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer":
+          options.attribution?.httpReferer ?? DEFAULT_HTTP_REFERER,
+        "X-Title": options.attribution?.xTitle ?? DEFAULT_X_TITLE,
+      },
+      body: JSON.stringify(bodyFor(options)),
+    },
+    callerSignal: options.abortSignal,
+    requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    retry,
+    consume: ({ response, session, safety }) =>
+      consumeSseStream({
         response,
-        onChunk,
+        onChunk: markedOnChunk(options.onChunk, safety),
         session,
-      });
-    } catch (error) {
-      session.dispose();
-      await failOrRetry(
-        classifyConsumptionError(error, session, contentEmitted),
-        {
-          attempt,
-          retry,
-          callerSignal,
-          contentEmitted: () => contentEmitted,
-        }
-      );
-      continue;
-    }
-  }
+      }),
+  });
 }
 
-interface AttemptSession {
-  controller: AbortController;
-  readonly callerAborted: boolean;
-  readonly timedOut: boolean;
-  dispose: () => void;
-}
-
-function beginAttempt(
-  callerSignal: AbortSignal | undefined,
-  requestTimeoutMs: number
-): AttemptSession {
-  let callerAborted = false;
-  let timedOut = false;
-  const controller = new AbortController();
-
-  const onCallerAbort = () => {
-    callerAborted = true;
-    controller.abort();
+function markedOnChunk(
+  onChunk: (delta: string) => Promise<void>,
+  safety: AttemptSafety
+): (delta: string) => Promise<void> {
+  return async (delta: string) => {
+    safety.markEmitted();
+    await onChunk(delta);
   };
-  callerSignal?.addEventListener("abort", onCallerAbort);
-  if (callerSignal?.aborted) {
-    onCallerAbort();
-  }
-
-  const ttfbTimer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, requestTimeoutMs);
-
-  return {
-    controller,
-    get callerAborted() {
-      return callerAborted;
-    },
-    get timedOut() {
-      return timedOut;
-    },
-    dispose() {
-      clearTimeout(ttfbTimer);
-      callerSignal?.removeEventListener("abort", onCallerAbort);
-    },
-  };
-}
-
-function classifyFetchRejection(
-  error: unknown,
-  session: AttemptSession,
-  requestTimeoutMs: number
-): OpenRouterError {
-  if (session.callerAborted || session.controller.signal.aborted) {
-    if (session.timedOut && !session.callerAborted) {
-      return timeoutError(requestTimeoutMs, true);
-    }
-    return abortedError();
-  }
-  if (isAbortError(error)) {
-    return abortedError();
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return new OpenRouterError(`Network error: ${message}`, {
-    code: "network_error",
-    retryable: true,
-  });
-}
-
-function classifyConsumptionError(
-  error: unknown,
-  session: AttemptSession,
-  contentEmitted: boolean
-): OpenRouterError {
-  if (session.callerAborted) {
-    return abortedError();
-  }
-  if (session.timedOut) {
-    return new OpenRouterError(
-      "No response received within the request timeout",
-      { code: "timeout", retryable: !contentEmitted }
-    );
-  }
-  if (error instanceof OpenRouterError) {
-    return error;
-  }
-  if (isAbortError(error)) {
-    return abortedError();
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return new OpenRouterError(`Stream failed after connecting: ${message}`, {
-    code: "network_error",
-    retryable: false,
-  });
-}
-
-function timeoutError(
-  requestTimeoutMs: number,
-  retryable: boolean
-): OpenRouterError {
-  return new OpenRouterError(
-    `No response received within ${requestTimeoutMs}ms`,
-    { code: "timeout", retryable }
-  );
-}
-
-function abortedError(): OpenRouterError {
-  return new OpenRouterError("Request aborted", {
-    code: "aborted",
-    retryable: false,
-  });
-}
-
-async function failOrRetry(
-  error: OpenRouterError,
-  context: {
-    attempt: number;
-    retry: RetryOptions;
-    callerSignal?: AbortSignal;
-    contentEmitted: () => boolean;
-  }
-): Promise<void> {
-  const canRetry =
-    error.retryable &&
-    !context.contentEmitted() &&
-    context.attempt <= context.retry.maxRetries &&
-    !context.callerSignal?.aborted;
-
-  if (!canRetry) {
-    throw error;
-  }
-
-  await abortableSleep(
-    backoffDelayMs(context.attempt, context.retry, error.retryAfterMs),
-    context.callerSignal
-  );
-  if (context.callerSignal?.aborted) {
-    throw abortedError();
-  }
 }
 
 async function consumeSseStream(context: {

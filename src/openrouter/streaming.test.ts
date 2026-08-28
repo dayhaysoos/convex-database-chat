@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { OpenRouterError } from "./errors.js";
 import {
-  OpenRouterError,
   streamChatCompletion,
   type StreamChatCompletionOptions,
-} from "./index.js";
+} from "./streaming.js";
 
 const encoder = new TextEncoder();
 
