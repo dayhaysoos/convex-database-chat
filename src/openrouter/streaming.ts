@@ -354,7 +354,6 @@ async function consumeSseStream(context: {
   let buffer = "";
   let firstByteSeen = false;
 
-  // Track tool calls across chunks
   const toolCallsMap = new Map<
     number,
     { id: string; name: string; arguments: string }
@@ -373,14 +372,12 @@ async function consumeSseStream(context: {
       const parsed = JSON.parse(data);
       const choice = parsed.choices?.[0];
 
-      // Handle content delta - pass just the delta, not accumulated
       const content = choice?.delta?.content;
       if (content) {
         fullContent += content;
         await onChunk(content);
       }
 
-      // Handle tool call deltas
       const toolCallsDelta = choice?.delta?.tool_calls;
       if (toolCallsDelta) {
         for (const tcDelta of toolCallsDelta) {
@@ -403,7 +400,7 @@ async function consumeSseStream(context: {
         }
       }
     } catch {
-      // Ignore parse errors for malformed chunks
+      // Malformed chunks happen; a partial line must not kill the stream.
     }
   };
 
@@ -422,7 +419,7 @@ async function consumeSseStream(context: {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
-      buffer = lines.pop() ?? ""; // Keep incomplete line in buffer
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         await handleLine(line);

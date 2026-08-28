@@ -329,9 +329,6 @@ describe("databaseChat chat", () => {
     });
 
     it("drops leading tool results orphaned by history truncation", () => {
-      // The most-recent-N window can begin with tool results whose paired
-      // assistant tool_calls message fell outside the window. Providers
-      // reject such payloads, so the orphans must be dropped.
       const messages = [
         {
           role: "tool" as const,
@@ -580,7 +577,6 @@ describe("databaseChat chat", () => {
         "tool",
         "assistant",
       ]);
-      // The tool result carried the latest message (the user's own message).
       const toolResult = JSON.parse(messages[2].toolResults![0].result);
       expect(toolResult.role).toBe("user");
     });
