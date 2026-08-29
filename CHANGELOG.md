@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-alpha.2] - Unreleased
+
+### Breaking
+
+- **Send options are sectioned.** The flat option list is replaced by an
+  `options` object with a `chat` section (systemPrompt, toolGuidance, tools,
+  maxMessagesForLLM, toolContext, maxToolLoops, streamThrottleMs,
+  maxToolResultChars, validateResultContract) and a `provider` section (model,
+  httpReferer, xTitle, maxRetries, requestTimeoutMs, baseDelayMs, maxDelayMs).
+  Defaults go in `defineDatabaseChat({ options: { chat: ..., provider: ... } })`;
+  every field is per-call overridable via `options` on `chat.send`, merged field
+  by field. The wire config of `chat.send` is namespaced the same way, so apps
+  calling the component action directly must nest their config. Adding a new
+  option is now a one-module change instead of eight edits across three files.
+
 ## [0.5.0-alpha.1] - 2026-08-28 (alpha)
 
 ### Fixed

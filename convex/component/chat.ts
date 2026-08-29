@@ -18,6 +18,12 @@ import { DeltaStreamer } from "./deltaStreamer";
 import { executeToolWithContext } from "./toolExecution";
 import { shapeToolResult } from "./resultContract";
 import {
+  chatOptionsValidator,
+  type ResultContractValidation,
+} from "./chatOptions";
+import { sendOptionsValidator, type SendOptions } from "./options";
+import { DEFAULT_MODEL } from "../../src/openrouter/options.js";
+import {
   OpenRouterError,
   isAbortError,
   streamChatCompletion,
@@ -27,9 +33,9 @@ import {
   type OpenRouterErrorCode,
 } from "../../src/openrouter/errors.js";
 
-export type ResultContractValidation = "off" | "warn" | "enforce";
-
 export type StoppedReason = "max_tool_loops";
+
+export type { ResultContractValidation };
 
 export interface DatabaseChatSendResult {
   success: boolean;
@@ -41,37 +47,7 @@ export interface DatabaseChatSendResult {
   toolCalls?: Array<{ name: string; args: unknown; result: unknown }>;
 }
 
-const sendConfigValidator = v.object({
-  apiKey: v.string(),
-  model: v.optional(v.string()),
-  systemPrompt: v.optional(v.string()),
-  toolGuidance: v.optional(v.string()),
-  // Tools the LLM can call
-  tools: v.optional(v.array(databaseChatToolValidator)),
-  // Max messages to include in LLM context (default: 50)
-  maxMessagesForLLM: v.optional(v.number()),
-  toolContext: v.optional(v.any()),
-  // Max tool-calling rounds per message before giving up (default: 5)
-  maxToolLoops: v.optional(v.number()),
-  // Minimum ms between stream delta writes (default: 100)
-  streamThrottleMs: v.optional(v.number()),
-  // Max characters of a serialized tool result sent to the LLM (default: 16000)
-  maxToolResultChars: v.optional(v.number()),
-  // OpenRouter attribution headers (sent as HTTP-Referer / X-Title)
-  httpReferer: v.optional(v.string()),
-  xTitle: v.optional(v.string()),
-  maxRetries: v.optional(v.number()),
-  requestTimeoutMs: v.optional(v.number()),
-  baseDelayMs: v.optional(v.number()),
-  maxDelayMs: v.optional(v.number()),
-  validateResultContract: v.optional(
-    v.union(
-      v.literal("off"),
-      v.literal("warn"),
-      v.literal("enforce")
-    )
-  ),
-});
+const sendConfigValidator = sendOptionsValidator;
 
 const sendReturnValidator = v.object({
   success: v.boolean(),
@@ -144,33 +120,16 @@ async function sendInternal(
   args: {
     conversationId: Id<"conversations">;
     message: string;
-    config: {
-      apiKey: string;
-      model?: string;
-      systemPrompt?: string;
-      toolGuidance?: ToolGuidanceOption;
-      tools?: DatabaseChatTool[];
-      maxMessagesForLLM?: number;
-      toolContext?: Record<string, unknown>;
-      maxToolLoops?: number;
-      streamThrottleMs?: number;
-      maxToolResultChars?: number;
-      httpReferer?: string;
-      xTitle?: string;
-      maxRetries?: number;
-      requestTimeoutMs?: number;
-      baseDelayMs?: number;
-      maxDelayMs?: number;
-      validateResultContract?: ResultContractValidation;
-    };
+    config: SendOptions;
   }
 ): Promise<DatabaseChatSendResult> {
   const { conversationId, message, config } = args;
-  const tools = (config.tools ?? []) as DatabaseChatTool[];
-  const maxToolLoops = config.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS;
-  const maxToolResultChars = config.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
+  const tools = (config.chat?.tools ?? []) as DatabaseChatTool[];
+  const maxToolLoops = config.chat?.maxToolLoops ?? DEFAULT_MAX_TOOL_LOOPS;
+  const maxToolResultChars =
+    config.chat?.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
   const contractValidation: ResultContractValidation =
-    config.validateResultContract ?? "warn";
+    config.chat?.validateResultContract ?? "warn";
   const executedToolCalls: Array<{
     name: string;
     args: unknown;
@@ -179,7 +138,7 @@ async function sendInternal(
 
   // Create DeltaStreamer for efficient streaming (O(n) instead of O(n²) bandwidth)
   const streamer = new DeltaStreamer(ctx, api, conversationId, {
-    throttleMs: config.streamThrottleMs ?? DEFAULT_STREAM_THROTTLE_MS,
+    throttleMs: config.chat?.streamThrottleMs ?? DEFAULT_STREAM_THROTTLE_MS,
     onAbort: async (reason) => {
       console.warn("Stream aborted:", reason);
     },
@@ -189,22 +148,15 @@ async function sendInternal(
     messages: Parameters<typeof streamChatCompletion>[0]["messages"]
   ) =>
     streamChatCompletion({
+      ...(config.provider ?? {}),
       apiKey: config.apiKey,
-      model: config.model ?? "openai/gpt-4o",
+      model: config.provider?.model ?? DEFAULT_MODEL,
       messages,
       tools: tools.length > 0 ? formatToolsForLLM(tools) : undefined,
       onChunk: async (delta: string) => {
         await streamer.addParts([{ type: "text-delta", text: delta }]);
       },
       abortSignal: streamer.abortController.signal,
-      attribution: {
-        httpReferer: config.httpReferer,
-        xTitle: config.xTitle,
-      },
-      maxRetries: config.maxRetries,
-      requestTimeoutMs: config.requestTimeoutMs,
-      baseDelayMs: config.baseDelayMs,
-      maxDelayMs: config.maxDelayMs,
     });
 
   try {
@@ -216,7 +168,7 @@ async function sendInternal(
     });
 
     // 2. Get conversation history (bounded by limit)
-    const messagesLimit = config.maxMessagesForLLM ?? 50;
+    const messagesLimit = config.chat?.maxMessagesForLLM ?? 50;
     const messages = await ctx.runQuery(api.messages.list, {
       conversationId,
       limit: messagesLimit,
@@ -227,9 +179,9 @@ async function sendInternal(
 
     // 4. Build messages for OpenRouter
     const systemPrompt = buildSystemPromptWithTools(
-      config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      config.chat?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       tools,
-      { toolGuidance: config.toolGuidance }
+      { toolGuidance: config.chat?.toolGuidance }
     );
     const openRouterMessages = buildMessagesWithTools(messages, systemPrompt);
 
@@ -313,7 +265,7 @@ async function sendInternal(
             ctx,
             tool,
             parsedArgs,
-            config.toolContext
+            config.chat?.toolContext
           );
 
           const shaped = shapeToolResult(tool, result, {

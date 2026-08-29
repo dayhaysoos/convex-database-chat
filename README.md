@@ -548,8 +548,10 @@ import { components } from "./_generated/api";
 import { defineDatabaseChat } from "@dayhaysoos/convex-database-chat/client";
 
 const chat = defineDatabaseChat(components.databaseChat, {
-  model: "openai/gpt-4o",
-  systemPrompt: SYSTEM_PROMPT,
+  options: {
+    chat: { systemPrompt: SYSTEM_PROMPT },
+    provider: { model: "openai/gpt-4o" },
+  },
   tools: TOOLS,
   // Called server-side in each wrapper; never trust client-supplied IDs.
   getExternalId: async (ctx) => {
@@ -575,11 +577,27 @@ If no identity can be resolved (no `getExternalId` configured and no explicit
 access control. You can still call the raw component endpoints directly for
 advanced setups - see [Security & Multi-tenant Access](#security--multi-tenant-access).
 
-Other useful config options: `maxToolLoops` (default 5), `streamThrottleMs`
-(default 100), `maxToolResultChars` (default 16000, oversized tool results are
-truncated and flagged `{ truncated: true }`), `httpReferer` / `xTitle`
-(OpenRouter attribution headers), `maxRetries` (default 2), `requestTimeoutMs`
-(default 30000), and `validateResultContract` (default `"warn"`).
+Send options live in a single `options` object with two sections: `chat`
+(`systemPrompt`, `maxMessagesForLLM`, `maxToolLoops` (default 5),
+`streamThrottleMs` (default 100), `maxToolResultChars` (default 16000, oversized
+tool results are truncated and flagged `{ truncated: true }`),
+`validateResultContract` (default `"warn"`), `toolContext`) and `provider`
+(`model`, `maxRetries` (default 2), `requestTimeoutMs` (default 30000),
+`httpReferer` / `xTitle` OpenRouter attribution headers). Set defaults at
+`defineDatabaseChat` and override any field per call — later values win field
+by field:
+
+```typescript
+const result = await chat.send(ctx, {
+  conversationId,
+  message,
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  options: {
+    chat: { validateResultContract: "enforce" },
+    provider: { model: "openai/gpt-4o" },
+  },
+});
+```
 
 ### Reliability: retries, timeouts, and typed errors
 
