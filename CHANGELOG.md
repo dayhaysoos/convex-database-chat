@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-alpha.1] - Unreleased
+
+### Fixed
+
+- **Stale component declaration (#17)**: the published
+  `_generated/component.ts` was frozen at the 0.1-era API — it declared
+  removed streaming functions and omitted every `*ForExternalId` scoped
+  endpoint. Consumers on Convex >= 1.43 (whose codegen references the
+  package declaration directly) got TS2339 errors on the scoped APIs.
+  The declaration is regenerated from the current component source, the
+  codegen toolchain is pinned to current Convex
+  (`--component-dir ./convex/component` with a root `convex.json`),
+  and a freshness test now fails when component source exports and the
+  packaged declaration drift apart.
+
 ## [0.5.0-alpha.0] - 2026-08-28 (alpha)
 
 ### Breaking

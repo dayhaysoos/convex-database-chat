@@ -30,8 +30,16 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           config: {
             apiKey: string;
+            baseDelayMs?: number;
+            httpReferer?: string;
+            maxDelayMs?: number;
             maxMessagesForLLM?: number;
+            maxRetries?: number;
+            maxToolLoops?: number;
+            maxToolResultChars?: number;
             model?: string;
+            requestTimeoutMs?: number;
+            streamThrottleMs?: number;
             systemPrompt?: string;
             toolContext?: any;
             toolGuidance?: string;
@@ -56,6 +64,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
                 type: "object";
               };
             }>;
+            validateResultContract?: "off" | "warn" | "enforce";
+            xTitle?: string;
           };
           conversationId: string;
           message: string;
@@ -63,6 +73,83 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           content?: string;
           error?: string;
+          errorCode?:
+            | "unauthorized"
+            | "rate_limited"
+            | "provider_error"
+            | "network_error"
+            | "timeout"
+            | "aborted"
+            | "invalid_request"
+            | "unknown";
+          retryable?: boolean;
+          stoppedReason?: "max_tool_loops";
+          success: boolean;
+          toolCalls?: Array<{ args: any; name: string; result: any }>;
+        },
+        Name
+      >;
+      sendForExternalId: FunctionReference<
+        "action",
+        "internal",
+        {
+          config: {
+            apiKey: string;
+            baseDelayMs?: number;
+            httpReferer?: string;
+            maxDelayMs?: number;
+            maxMessagesForLLM?: number;
+            maxRetries?: number;
+            maxToolLoops?: number;
+            maxToolResultChars?: number;
+            model?: string;
+            requestTimeoutMs?: number;
+            streamThrottleMs?: number;
+            systemPrompt?: string;
+            toolContext?: any;
+            toolGuidance?: string;
+            tools?: Array<{
+              description: string;
+              handler: string;
+              handlerType?: "query" | "mutation" | "action";
+              metadata?: {
+                kind:
+                  | "count"
+                  | "paginated_list"
+                  | "semantic_search"
+                  | "detail"
+                  | "unknown";
+                resultContract?: "standard";
+              };
+              name: string;
+              parameters: {
+                additionalProperties?: boolean;
+                properties: any;
+                required?: Array<string>;
+                type: "object";
+              };
+            }>;
+            validateResultContract?: "off" | "warn" | "enforce";
+            xTitle?: string;
+          };
+          conversationId: string;
+          externalId: string;
+          message: string;
+        },
+        {
+          content?: string;
+          error?: string;
+          errorCode?:
+            | "unauthorized"
+            | "rate_limited"
+            | "provider_error"
+            | "network_error"
+            | "timeout"
+            | "aborted"
+            | "invalid_request"
+            | "unknown";
+          retryable?: boolean;
+          stoppedReason?: "max_tool_loops";
           success: boolean;
           toolCalls?: Array<{ args: any; name: string; result: any }>;
         },
@@ -91,6 +178,20 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         } | null,
         Name
       >;
+      getForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string },
+        {
+          _creationTime: number;
+          _id: string;
+          createdAt: number;
+          externalId: string;
+          title?: string;
+          updatedAt: number;
+        },
+        Name
+      >;
       list: FunctionReference<
         "query",
         "internal",
@@ -106,9 +207,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         Name
       >;
     };
-    hello: {
-      world: FunctionReference<"query", "internal", {}, string, Name>;
-    };
     messages: {
       add: FunctionReference<
         "mutation",
@@ -116,6 +214,22 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           content: string;
           conversationId: string;
+          partial?: boolean;
+          role: "user" | "assistant" | "tool";
+          toolCalls?: Array<{ arguments: string; id: string; name: string }>;
+          toolResults?: Array<{ result: string; toolCallId: string }>;
+        },
+        string,
+        Name
+      >;
+      addForExternalId: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          content: string;
+          conversationId: string;
+          externalId: string;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -133,6 +247,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           content: string;
           conversationId: string;
           createdAt: number;
+          partial?: boolean;
+          role: "user" | "assistant" | "tool";
+          toolCalls?: Array<{ arguments: string; id: string; name: string }>;
+          toolResults?: Array<{ result: string; toolCallId: string }>;
+        } | null,
+        Name
+      >;
+      getLatestForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string },
+        {
+          _creationTime: number;
+          _id: string;
+          content: string;
+          conversationId: string;
+          createdAt: number;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -142,13 +274,31 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       list: FunctionReference<
         "query",
         "internal",
-        { conversationId: string },
+        { conversationId: string; limit?: number },
         Array<{
           _creationTime: number;
           _id: string;
           content: string;
           conversationId: string;
           createdAt: number;
+          partial?: boolean;
+          role: "user" | "assistant" | "tool";
+          toolCalls?: Array<{ arguments: string; id: string; name: string }>;
+          toolResults?: Array<{ result: string; toolCallId: string }>;
+        }>,
+        Name
+      >;
+      listForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { conversationId: string; externalId: string; limit?: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          content: string;
+          conversationId: string;
+          createdAt: number;
+          partial?: boolean;
           role: "user" | "assistant" | "tool";
           toolCalls?: Array<{ arguments: string; id: string; name: string }>;
           toolResults?: Array<{ result: string; toolCallId: string }>;
@@ -157,32 +307,123 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       >;
     };
     stream: {
-      clear: FunctionReference<
+      abort: FunctionReference<
         "mutation",
         "internal",
-        { conversationId: string },
+        { reason: string; streamId: string },
         null,
         Name
       >;
-      getContent: FunctionReference<
+      abortByConversation: FunctionReference<
+        "mutation",
+        "internal",
+        { conversationId: string; reason: string },
+        boolean,
+        Name
+      >;
+      abortForExternalId: FunctionReference<
+        "mutation",
+        "internal",
+        { conversationId: string; externalId: string; reason: string },
+        boolean,
+        Name
+      >;
+      addDelta: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          end: number;
+          parts: Array<{
+            args?: string;
+            error?: string;
+            result?: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            type: "text-delta" | "tool-call" | "tool-result" | "error";
+          }>;
+          start: number;
+          streamId: string;
+        },
+        boolean,
+        Name
+      >;
+      create: FunctionReference<
+        "mutation",
+        "internal",
+        { conversationId: string },
+        string,
+        Name
+      >;
+      finish: FunctionReference<
+        "mutation",
+        "internal",
+        { streamId: string },
+        null,
+        Name
+      >;
+      getStream: FunctionReference<
         "query",
         "internal",
         { conversationId: string },
-        { content: string; updatedAt: number } | null,
+        {
+          abortReason?: string;
+          endedAt?: number;
+          startedAt: number;
+          status: "streaming" | "finished" | "aborted";
+          streamId: string;
+        } | null,
         Name
       >;
-      init: FunctionReference<
-        "mutation",
+      getStreamForExternalId: FunctionReference<
+        "query",
         "internal",
-        { conversationId: string },
-        null,
+        { conversationId: string; externalId: string },
+        {
+          abortReason?: string;
+          endedAt?: number;
+          startedAt: number;
+          status: "streaming" | "finished" | "aborted";
+          streamId: string;
+        } | null,
         Name
       >;
-      update: FunctionReference<
-        "mutation",
+      listDeltas: FunctionReference<
+        "query",
         "internal",
-        { content: string; conversationId: string },
-        null,
+        { cursor: number; streamId: string },
+        Array<{
+          end: number;
+          parts: Array<{
+            args?: string;
+            error?: string;
+            result?: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            type: "text-delta" | "tool-call" | "tool-result" | "error";
+          }>;
+          start: number;
+        }>,
+        Name
+      >;
+      listDeltasForExternalId: FunctionReference<
+        "query",
+        "internal",
+        { cursor: number; externalId: string; streamId: string },
+        Array<{
+          end: number;
+          parts: Array<{
+            args?: string;
+            error?: string;
+            result?: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            type: "text-delta" | "tool-call" | "tool-result" | "error";
+          }>;
+          start: number;
+        }>,
         Name
       >;
     };
