@@ -426,7 +426,10 @@ describe("databaseChat chat", () => {
       const result = await t.action(api.chat.send, {
         conversationId,
         message: "Hi",
-        config: { apiKey: "test-key", systemPrompt: "Be helpful." },
+        config: {
+          apiKey: "test-key",
+          chat: { systemPrompt: "Be helpful." },
+        },
       });
 
       expect(result.success).toBe(true);
@@ -454,7 +457,10 @@ describe("databaseChat chat", () => {
       const result = await t.action(api.chat.send, {
         conversationId,
         message: "Hi",
-        config: { apiKey: "invalid-key", systemPrompt: "Be helpful." },
+        config: {
+          apiKey: "invalid-key",
+          chat: { systemPrompt: "Be helpful." },
+        },
       });
 
       expect(result.success).toBe(false);
@@ -480,10 +486,12 @@ describe("databaseChat chat", () => {
         message: "Hi",
         config: {
           apiKey: "test-key",
-          systemPrompt: "Be helpful.",
-          maxRetries: 2,
-          baseDelayMs: 1,
-          maxDelayMs: 1,
+          chat: { systemPrompt: "Be helpful." },
+          provider: {
+            maxRetries: 2,
+            baseDelayMs: 1,
+            maxDelayMs: 1,
+          },
         },
       });
 
@@ -516,8 +524,7 @@ describe("databaseChat chat", () => {
         message: "What is the latest message?",
         config: {
           apiKey: "test-key",
-          systemPrompt: "Be helpful.",
-          tools: [tool],
+          chat: { systemPrompt: "Be helpful.", tools: [tool] },
         },
       });
 
@@ -562,9 +569,11 @@ describe("databaseChat chat", () => {
         message: "What is the latest message?",
         config: {
           apiKey: "test-key",
-          systemPrompt: "Be helpful.",
-          tools: [tool],
-          validateResultContract: "enforce",
+          chat: {
+            systemPrompt: "Be helpful.",
+            tools: [tool],
+            validateResultContract: "enforce",
+          },
         },
       });
 
@@ -603,9 +612,11 @@ describe("databaseChat chat", () => {
         message: "What is the latest message?",
         config: {
           apiKey: "test-key",
-          systemPrompt: "Be helpful.",
-          tools: [tool],
-          validateResultContract: "warn",
+          chat: {
+            systemPrompt: "Be helpful.",
+            tools: [tool],
+            validateResultContract: "warn",
+          },
         },
       });
 
@@ -632,9 +643,11 @@ describe("databaseChat chat", () => {
         message: "What is the latest message?",
         config: {
           apiKey: "test-key",
-          systemPrompt: "Be helpful.",
-          tools: [tool],
-          maxToolLoops: 2,
+          chat: {
+            systemPrompt: "Be helpful.",
+            tools: [tool],
+            maxToolLoops: 2,
+          },
         },
       });
 

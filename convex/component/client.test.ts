@@ -37,7 +37,7 @@ describe("DatabaseChatClient", () => {
       });
 
       const automatic = defineDatabaseChat(api, {
-        systemPrompt: "Base prompt.",
+        options: { chat: { systemPrompt: "Base prompt." } },
         tools: [listTool],
       });
 
@@ -49,18 +49,23 @@ describe("DatabaseChatClient", () => {
       );
 
       const disabled = defineDatabaseChat(api, {
-        systemPrompt: "Base prompt.",
+        options: {
+          chat: { systemPrompt: "Base prompt.", toolGuidance: "disabled" },
+        },
         tools: [listTool],
-        toolGuidance: "disabled",
       });
       expect(disabled.getSystemPromptWithTools()).not.toContain(
         "Tool result reliability:"
       );
 
       const custom = defineDatabaseChat(api, {
-        systemPrompt: "Base prompt.",
+        options: {
+          chat: {
+            systemPrompt: "Base prompt.",
+            toolGuidance: "Always mention exact scope labels.",
+          },
+        },
         tools: [listTool],
-        toolGuidance: "Always mention exact scope labels.",
       });
       expect(custom.getSystemPromptWithTools()).toContain(
         "Always mention exact scope labels."
@@ -482,15 +487,15 @@ describe("DatabaseChatClient", () => {
         conversationId: "conv123" as any,
         message: "hello",
         apiKey: "key",
-        maxToolLoops: 2,
-        streamThrottleMs: 50,
-        maxToolResultChars: 200,
+        options: {
+          chat: { maxToolLoops: 2, streamThrottleMs: 50, maxToolResultChars: 200 },
+        },
       });
 
       const config = calls[0].args.config;
-      expect(config.maxToolLoops).toBe(2);
-      expect(config.streamThrottleMs).toBe(50);
-      expect(config.maxToolResultChars).toBe(200);
+      expect(config.chat.maxToolLoops).toBe(2);
+      expect(config.chat.streamThrottleMs).toBe(50);
+      expect(config.chat.maxToolResultChars).toBe(200);
     });
   });
 });

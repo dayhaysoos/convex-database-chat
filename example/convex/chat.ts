@@ -434,13 +434,17 @@ export const sendMessage = action({
       message: args.message,
       config: {
         apiKey,
-        model: "anthropic/claude-sonnet-4",
-        systemPrompt: SYSTEM_PROMPT,
-        toolGuidance: "auto",
-        validateResultContract: "enforce",
-        tools,
-        toolContext: {
-          storeId: "demo-store",
+        chat: {
+          systemPrompt: SYSTEM_PROMPT,
+          toolGuidance: "auto",
+          validateResultContract: "enforce",
+          tools,
+          toolContext: {
+            storeId: "demo-store",
+          },
+        },
+        provider: {
+          model: "anthropic/claude-sonnet-4",
         },
       },
     })) as {

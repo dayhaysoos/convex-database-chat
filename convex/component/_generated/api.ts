@@ -10,11 +10,13 @@
 
 import type * as access from "../access.js";
 import type * as chat from "../chat.js";
+import type * as chatOptions from "../chatOptions.js";
 import type * as client from "../client.js";
 import type * as contextTypes from "../contextTypes.js";
 import type * as conversations from "../conversations.js";
 import type * as deltaStreamer from "../deltaStreamer.js";
 import type * as messages from "../messages.js";
+import type * as options from "../options.js";
 import type * as resultContract from "../resultContract.js";
 import type * as schemaTools from "../schemaTools.js";
 import type * as stream from "../stream.js";
@@ -32,11 +34,13 @@ import { anyApi, componentsGeneric } from "convex/server";
 const fullApi: ApiFromModules<{
   access: typeof access;
   chat: typeof chat;
+  chatOptions: typeof chatOptions;
   client: typeof client;
   contextTypes: typeof contextTypes;
   conversations: typeof conversations;
   deltaStreamer: typeof deltaStreamer;
   messages: typeof messages;
+  options: typeof options;
   resultContract: typeof resultContract;
   schemaTools: typeof schemaTools;
   stream: typeof stream;

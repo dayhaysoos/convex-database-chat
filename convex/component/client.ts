@@ -78,11 +78,13 @@ import type { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { DatabaseChatTool, AutoToolsConfig } from "./tools";
 import type { TableInfo, SchemaToolHandlers } from "./schemaTools";
-import type {
-  DatabaseChatSendResult,
-  ResultContractValidation,
-} from "./chat";
+import type { DatabaseChatSendResult } from "./chat";
 import { buildMessagesWithTools } from "./chat";
+import {
+  mergeOptionLayers,
+  type ChatOptions,
+  type OptionOverrides,
+} from "./options";
 import { generateToolsFromSchema } from "./schemaTools";
 import { formatToolsForLLM, findTool, validateToolArgs } from "./tools";
 import { executeToolHandler } from "./toolExecution";
@@ -130,12 +132,14 @@ const asStreamId = (id: string): Id<"streamingMessages"> =>
   id as Id<"streamingMessages">;
 
 export interface DatabaseChatConfig {
-  /** Default model to use (default: "openai/gpt-4o") */
-  model?: string;
-  /** Default system prompt */
-  systemPrompt?: string;
-  /** Reliability guidance for standard tool result contracts (default: "auto"). */
-  toolGuidance?: ToolGuidanceOption;
+  /**
+   * Option defaults for every send. Per-call options in
+   * `SendMessageOptions.options` override these field by field. Sections:
+   * `chat` holds the chat-loop knobs (systemPrompt, maxToolLoops,
+   * validateResultContract, ...), `provider` holds the transport knobs
+   * (model, maxRetries, requestTimeoutMs, httpReferer, xTitle).
+   */
+  options?: OptionOverrides;
   /**
    * Explicit tool definitions.
    * Use this for precise control over what queries the LLM can run.
@@ -156,36 +160,6 @@ export interface DatabaseChatConfig {
    * Fetches the most recent N messages to prevent unbounded queries.
    */
   maxMessagesForDisplay?: number;
-  /**
-   * Maximum messages to include in LLM context (default: 50).
-   * Uses the most recent N messages for conversation history.
-   */
-  maxMessagesForLLM?: number;
-  /**
-   * Maximum tool-calling rounds per message before giving up (default: 5).
-   */
-  maxToolLoops?: number;
-  /**
-   * Minimum ms between stream delta writes (default: 100).
-   */
-  streamThrottleMs?: number;
-  /**
-   * OpenRouter attribution header (HTTP-Referer). Identifies your app to
-   * OpenRouter. Defaults to the package repository URL.
-   */
-  httpReferer?: string;
-  /**
-   * OpenRouter attribution header (X-Title). Defaults to "DatabaseChat".
-   */
-  xTitle?: string;
-  /**
-   * Max characters of a serialized tool result sent to the LLM (default: 16000).
-   * Oversized results are truncated and flagged with `{ truncated: true }`.
-   */
-  maxToolResultChars?: number;
-  maxRetries?: number;
-  requestTimeoutMs?: number;
-  validateResultContract?: ResultContractValidation;
   /**
    * Resolve the caller's externalId server-side. When configured, all client
    * methods route through ownership-checked (*ForExternalId) endpoints -
@@ -212,23 +186,11 @@ export interface SendMessageOptions {
   message: string;
   /** OpenRouter API key (required - get from process.env in your app) */
   apiKey: string;
-  /** Override model for this message */
-  model?: string;
-  /** Override system prompt for this message */
-  systemPrompt?: string;
-  /** Override tool reliability guidance for this message */
-  toolGuidance?: ToolGuidanceOption;
-  /** Server-side context merged into tool args (not exposed to LLM) */
-  toolContext?: Record<string, unknown>;
-  /** Override max tool-calling rounds for this message */
-  maxToolLoops?: number;
-  /** Override stream throttle for this message */
-  streamThrottleMs?: number;
-  /** Override max tool result chars for this message */
-  maxToolResultChars?: number;
-  maxRetries?: number;
-  requestTimeoutMs?: number;
-  validateResultContract?: ResultContractValidation;
+  /**
+   * Per-call option overrides, merged field by field over the
+   * `defineDatabaseChat` defaults. Sections: `chat`, `provider`.
+   */
+  options?: OptionOverrides;
   /**
    * Explicit externalId. Overrides the configured getExternalId resolver.
    * Only use this if the value is derived server-side, never from client input.
@@ -487,31 +449,23 @@ export class DatabaseChatClient {
     options: SendMessageOptions
   ): Promise<SendMessageResult> {
     const externalId = await this.resolveExternalId(ctx, options.externalId);
+    const config = {
+      apiKey: options.apiKey,
+      chat: mergeOptionLayers(
+        this.config.options?.chat,
+        options.options?.chat,
+        { tools: this.tools.length > 0 ? this.tools : undefined }
+      ),
+      provider: mergeOptionLayers(
+        this.config.options?.provider,
+        options.options?.provider
+      ),
+    };
     return await ctx.runAction(this.component.chat.sendForExternalId, {
       conversationId: asConversationId(options.conversationId),
       externalId,
       message: options.message,
-      config: {
-        apiKey: options.apiKey,
-        model: options.model ?? this.config.model,
-        systemPrompt: options.systemPrompt ?? this.config.systemPrompt,
-        toolGuidance: options.toolGuidance ?? this.config.toolGuidance,
-        tools: this.tools.length > 0 ? this.tools : undefined,
-        maxMessagesForLLM: this.config.maxMessagesForLLM ?? 50,
-        toolContext: options.toolContext,
-        maxToolLoops: options.maxToolLoops ?? this.config.maxToolLoops,
-        streamThrottleMs:
-          options.streamThrottleMs ?? this.config.streamThrottleMs,
-        maxToolResultChars:
-          options.maxToolResultChars ?? this.config.maxToolResultChars,
-        maxRetries: options.maxRetries ?? this.config.maxRetries,
-        requestTimeoutMs:
-          options.requestTimeoutMs ?? this.config.requestTimeoutMs,
-        validateResultContract:
-          options.validateResultContract ?? this.config.validateResultContract,
-        httpReferer: this.config.httpReferer,
-        xTitle: this.config.xTitle,
-      },
+      config,
     });
   }
 
@@ -585,6 +539,7 @@ export class DatabaseChatClient {
     tools?: ReturnType<typeof formatToolsForLLM>;
   }> {
     const externalId = await this.resolveExternalId(ctx, options?.externalId);
+    const chatOptions = this.config.options?.chat;
 
     // Use LLM-specific limit for context window efficiency
     const messages = await ctx.runQuery(
@@ -592,15 +547,16 @@ export class DatabaseChatClient {
       {
         conversationId: asConversationId(conversationId),
         externalId,
-        limit: this.config.maxMessagesForLLM ?? 50,
+        limit: chatOptions?.maxMessagesForLLM ?? 50,
       },
     );
 
-    const basePrompt = options?.systemPrompt ?? this.config.systemPrompt ?? "";
+    const basePrompt =
+      options?.systemPrompt ?? chatOptions?.systemPrompt ?? "";
     const systemPrompt =
       this.hasTools() && options?.includeTools !== false
         ? buildSystemPromptWithTools(basePrompt, this.tools, {
-            toolGuidance: options?.toolGuidance ?? this.config.toolGuidance,
+            toolGuidance: options?.toolGuidance ?? chatOptions?.toolGuidance,
           })
         : basePrompt;
 
@@ -635,14 +591,16 @@ export class DatabaseChatClient {
     basePrompt?: string,
     toolGuidance?: ToolGuidanceOption
   ): string {
-    const prompt = basePrompt ?? this.config.systemPrompt ?? "";
+    const prompt =
+      basePrompt ?? this.config.options?.chat?.systemPrompt ?? "";
 
     if (!this.hasTools()) {
       return prompt;
     }
 
     return buildSystemPromptWithTools(prompt, this.tools, {
-      toolGuidance: toolGuidance ?? this.config.toolGuidance,
+      toolGuidance:
+        toolGuidance ?? this.config.options?.chat?.toolGuidance,
     });
   }
 }

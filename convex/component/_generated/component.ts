@@ -30,42 +30,46 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           config: {
             apiKey: string;
-            baseDelayMs?: number;
-            httpReferer?: string;
-            maxDelayMs?: number;
-            maxMessagesForLLM?: number;
-            maxRetries?: number;
-            maxToolLoops?: number;
-            maxToolResultChars?: number;
-            model?: string;
-            requestTimeoutMs?: number;
-            streamThrottleMs?: number;
-            systemPrompt?: string;
-            toolContext?: any;
-            toolGuidance?: string;
-            tools?: Array<{
-              description: string;
-              handler: string;
-              handlerType?: "query" | "mutation" | "action";
-              metadata?: {
-                kind:
-                  | "count"
-                  | "paginated_list"
-                  | "semantic_search"
-                  | "detail"
-                  | "unknown";
-                resultContract?: "standard";
-              };
-              name: string;
-              parameters: {
-                additionalProperties?: boolean;
-                properties: any;
-                required?: Array<string>;
-                type: "object";
-              };
-            }>;
-            validateResultContract?: "off" | "warn" | "enforce";
-            xTitle?: string;
+            chat?: {
+              maxMessagesForLLM?: number;
+              maxToolLoops?: number;
+              maxToolResultChars?: number;
+              streamThrottleMs?: number;
+              systemPrompt?: string;
+              toolContext?: any;
+              toolGuidance?: string;
+              tools?: Array<{
+                description: string;
+                handler: string;
+                handlerType?: "query" | "mutation" | "action";
+                metadata?: {
+                  kind:
+                    | "count"
+                    | "paginated_list"
+                    | "semantic_search"
+                    | "detail"
+                    | "unknown";
+                  resultContract?: "standard";
+                };
+                name: string;
+                parameters: {
+                  additionalProperties?: boolean;
+                  properties: any;
+                  required?: Array<string>;
+                  type: "object";
+                };
+              }>;
+              validateResultContract?: "off" | "warn" | "enforce";
+            };
+            provider?: {
+              baseDelayMs?: number;
+              httpReferer?: string;
+              maxDelayMs?: number;
+              maxRetries?: number;
+              model?: string;
+              requestTimeoutMs?: number;
+              xTitle?: string;
+            };
           };
           conversationId: string;
           message: string;
@@ -95,42 +99,46 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           config: {
             apiKey: string;
-            baseDelayMs?: number;
-            httpReferer?: string;
-            maxDelayMs?: number;
-            maxMessagesForLLM?: number;
-            maxRetries?: number;
-            maxToolLoops?: number;
-            maxToolResultChars?: number;
-            model?: string;
-            requestTimeoutMs?: number;
-            streamThrottleMs?: number;
-            systemPrompt?: string;
-            toolContext?: any;
-            toolGuidance?: string;
-            tools?: Array<{
-              description: string;
-              handler: string;
-              handlerType?: "query" | "mutation" | "action";
-              metadata?: {
-                kind:
-                  | "count"
-                  | "paginated_list"
-                  | "semantic_search"
-                  | "detail"
-                  | "unknown";
-                resultContract?: "standard";
-              };
-              name: string;
-              parameters: {
-                additionalProperties?: boolean;
-                properties: any;
-                required?: Array<string>;
-                type: "object";
-              };
-            }>;
-            validateResultContract?: "off" | "warn" | "enforce";
-            xTitle?: string;
+            chat?: {
+              maxMessagesForLLM?: number;
+              maxToolLoops?: number;
+              maxToolResultChars?: number;
+              streamThrottleMs?: number;
+              systemPrompt?: string;
+              toolContext?: any;
+              toolGuidance?: string;
+              tools?: Array<{
+                description: string;
+                handler: string;
+                handlerType?: "query" | "mutation" | "action";
+                metadata?: {
+                  kind:
+                    | "count"
+                    | "paginated_list"
+                    | "semantic_search"
+                    | "detail"
+                    | "unknown";
+                  resultContract?: "standard";
+                };
+                name: string;
+                parameters: {
+                  additionalProperties?: boolean;
+                  properties: any;
+                  required?: Array<string>;
+                  type: "object";
+                };
+              }>;
+              validateResultContract?: "off" | "warn" | "enforce";
+            };
+            provider?: {
+              baseDelayMs?: number;
+              httpReferer?: string;
+              maxDelayMs?: number;
+              maxRetries?: number;
+              model?: string;
+              requestTimeoutMs?: number;
+              xTitle?: string;
+            };
           };
           conversationId: string;
           externalId: string;

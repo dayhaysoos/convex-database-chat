@@ -6,6 +6,7 @@ import {
   type AttemptSession,
   type AttemptSafety,
 } from "./attempt.js";
+import { type ProviderOptions } from "./options.js";
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -34,18 +35,13 @@ export interface ChatCompletionTool {
   function: { name: string; description: string; parameters: unknown };
 }
 
-export interface StreamChatCompletionOptions {
+export interface StreamChatCompletionOptions extends ProviderOptions {
   apiKey: string;
   model: string;
   messages: ChatCompletionMessage[];
   tools?: ChatCompletionTool[];
   onChunk: (delta: string) => Promise<void>;
   abortSignal?: AbortSignal;
-  attribution?: OpenRouterAttribution;
-  maxRetries?: number;
-  requestTimeoutMs?: number;
-  baseDelayMs?: number;
-  maxDelayMs?: number;
 }
 
 export interface StreamChatCompletionResult {
@@ -69,9 +65,8 @@ export async function streamChatCompletion(
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer":
-          options.attribution?.httpReferer ?? DEFAULT_HTTP_REFERER,
-        "X-Title": options.attribution?.xTitle ?? DEFAULT_X_TITLE,
+        "HTTP-Referer": options.httpReferer ?? DEFAULT_HTTP_REFERER,
+        "X-Title": options.xTitle ?? DEFAULT_X_TITLE,
       },
       body: JSON.stringify(bodyFor(options)),
     },
